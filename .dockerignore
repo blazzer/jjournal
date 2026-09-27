@@ -1,0 +1,7 @@
+probe-out
+data
+*.db
+*.db-wal
+*.db-shm
+.git
+.env

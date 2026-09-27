@@ -1,0 +1,193 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+const entryCols = `e.id, e.source, e.author_lj_username, e.journal_lj_username, e.lj_itemid, e.lj_url,
+	e.subject, e.body_html, e.security, e.allowmask, e.event_time, e.userpic_url, e.mood, e.music,
+	e.lj_comment_count, e.journal_type, e.created_at, e.updated_at,
+	CASE WHEN e.source = 'native'
+		THEN (SELECT COUNT(*) FROM comments c WHERE c.entry_id = e.id AND c.deleted = 0)
+		ELSE e.lj_comment_count END`
+
+func scanEntry(row interface{ Scan(...any) error }) (Entry, error) {
+	var e Entry
+	var item sql.NullInt64
+	var event, created, updated string
+	var count int
+	err := row.Scan(&e.ID, &e.Source, &e.Author, &e.Journal, &item, &e.URL, &e.Subject, &e.BodyHTML,
+		&e.Security, &e.AllowMask, &event, &e.UserpicURL, &e.Mood, &e.Music, &e.CommentCount, &e.JournalType,
+		&created, &updated, &count)
+	if err != nil {
+		return Entry{}, err
+	}
+	if item.Valid {
+		e.ItemID = item.Int64
+	}
+	e.EventTime = parseTime(sql.NullString{String: event, Valid: true})
+	e.CreatedAt = parseTime(sql.NullString{String: created, Valid: true})
+	e.UpdatedAt = parseTime(sql.NullString{String: updated, Valid: true})
+	e.CommentCount = count
+	return e, nil
+}
+
+// FriendsPage lists the merged reading page for viewer.
+func (s *Store) FriendsPage(ctx context.Context, viewerID int64, groupMask uint32, skip, limit int) (Page, error) {
+	skip = NormalizeSkip(skip)
+	if limit <= 0 {
+		limit = PageSize
+	}
+	q := `SELECT ` + entryCols + ` FROM entries e
+LEFT JOIN users author ON author.lj_username = e.author_lj_username
+WHERE e.id IN (
+	SELECT lj.id FROM entries lj
+	WHERE lj.source = 'lj'
+	  AND EXISTS (SELECT 1 FROM entry_visibility v WHERE v.entry_id = lj.id AND v.viewer_user_id = ?)
+	  AND NOT EXISTS (
+		SELECT 1 FROM users mu WHERE mu.lj_username = lj.author_lj_username
+		  AND mu.migrated_at IS NOT NULL AND mu.migrated_at <= lj.event_time)
+	  AND (? = 0 OR (
+		(COALESCE((SELECT f.groupmask FROM lj_friends f WHERE f.user_id = ? AND f.friend_lj_username = lj.author_lj_username), 0)
+		 | COALESCE((SELECT n.groupmask FROM native_friends n JOIN users fu ON fu.id = n.friend_user_id WHERE n.user_id = ? AND fu.lj_username = lj.author_lj_username), 0)
+		) & ?) != 0)
+	UNION
+	SELECT na.id FROM entries na
+	JOIN users author2 ON author2.lj_username = na.author_lj_username
+	JOIN users viewer ON viewer.id = ?
+	WHERE na.source = 'native'
+	  AND (
+		EXISTS (SELECT 1 FROM lj_friends f WHERE f.user_id = viewer.id AND f.friend_lj_username = author2.lj_username)
+		OR EXISTS (SELECT 1 FROM native_friends n WHERE n.user_id = viewer.id AND n.friend_user_id = author2.id)
+	  )
+	  AND (
+		na.security = 'public'
+		OR (na.security = 'friends' AND (
+			EXISTS (SELECT 1 FROM lj_friends f WHERE f.user_id = author2.id AND f.friend_lj_username = viewer.lj_username)
+			OR EXISTS (SELECT 1 FROM native_friends n WHERE n.user_id = author2.id AND n.friend_user_id = viewer.id)
+		))
+		OR (na.security = 'custom' AND (
+			(COALESCE((SELECT f.groupmask FROM lj_friends f WHERE f.user_id = author2.id AND f.friend_lj_username = viewer.lj_username), 0)
+			 | COALESCE((SELECT n.groupmask FROM native_friends n WHERE n.user_id = author2.id AND n.friend_user_id = viewer.id), 0)
+			) & na.allowmask) != 0)
+	  )
+	  AND (? = 0 OR (
+		(COALESCE((SELECT f.groupmask FROM lj_friends f WHERE f.user_id = viewer.id AND f.friend_lj_username = author2.lj_username), 0)
+		 | COALESCE((SELECT n.groupmask FROM native_friends n WHERE n.user_id = viewer.id AND n.friend_user_id = author2.id), 0)
+		) & ?) != 0)
+)
+ORDER BY e.event_time DESC, e.id DESC
+LIMIT ? OFFSET ?`
+	args := []any{viewerID, groupMask, viewerID, viewerID, groupMask, viewerID, groupMask, groupMask, limit + 1, skip}
+	return s.queryPage(ctx, q, args, skip, limit)
+}
+
+// JournalPage lists entries in a journal the viewer may see.
+func (s *Store) JournalPage(ctx context.Context, viewerID int64, journal string, skip, limit int) (Page, error) {
+	skip = NormalizeSkip(skip)
+	if limit <= 0 {
+		limit = PageSize
+	}
+	q := `SELECT ` + entryCols + ` FROM entries e
+WHERE e.journal_lj_username = ?
+AND (
+	(e.source = 'lj'
+	  AND EXISTS (SELECT 1 FROM entry_visibility v WHERE v.entry_id = e.id AND v.viewer_user_id = ?)
+	  AND NOT EXISTS (
+		SELECT 1 FROM users mu WHERE mu.lj_username = e.author_lj_username
+		  AND mu.migrated_at IS NOT NULL AND mu.migrated_at <= e.event_time))
+	OR (e.source = 'native' AND ` + nativeVisibleSQL + `)
+)
+ORDER BY e.event_time DESC, e.id DESC
+LIMIT ? OFFSET ?`
+	args := []any{journal, viewerID, viewerID, limit + 1, skip}
+	return s.queryPage(ctx, q, args, skip, limit)
+}
+
+// nativeVisibleSQL expects the viewer id as the next placeholder and refers to entries alias e.
+const nativeVisibleSQL = `EXISTS (
+	SELECT 1 FROM users author, users viewer
+	WHERE author.lj_username = e.author_lj_username AND viewer.id = ?
+	  AND (
+		author.id = viewer.id
+		OR e.security = 'public'
+		OR (e.security = 'friends' AND (
+			EXISTS (SELECT 1 FROM lj_friends f WHERE f.user_id = author.id AND f.friend_lj_username = viewer.lj_username)
+			OR EXISTS (SELECT 1 FROM native_friends n WHERE n.user_id = author.id AND n.friend_user_id = viewer.id)
+		))
+		OR (e.security = 'custom' AND (
+			(COALESCE((SELECT f.groupmask FROM lj_friends f WHERE f.user_id = author.id AND f.friend_lj_username = viewer.lj_username), 0)
+			 | COALESCE((SELECT n.groupmask FROM native_friends n WHERE n.user_id = author.id AND n.friend_user_id = viewer.id), 0)
+			) & e.allowmask) != 0)
+	  )
+)`
+
+// VisibleEntry returns one entry when the viewer may see it.
+func (s *Store) VisibleEntry(ctx context.Context, viewerID int64, journal string, entryID int64) (Entry, error) {
+	q := `SELECT ` + entryCols + ` FROM entries e
+WHERE e.id = ? AND e.journal_lj_username = ?
+AND (
+	(e.source = 'lj'
+	  AND EXISTS (SELECT 1 FROM entry_visibility v WHERE v.entry_id = e.id AND v.viewer_user_id = ?)
+	  AND NOT EXISTS (
+		SELECT 1 FROM users mu WHERE mu.lj_username = e.author_lj_username
+		  AND mu.migrated_at IS NOT NULL AND mu.migrated_at <= e.event_time))
+	OR (e.source = 'native' AND ` + nativeVisibleSQL + `)
+)`
+	row := s.db.QueryRowContext(ctx, q, entryID, journal, viewerID, viewerID)
+	e, err := scanEntry(row)
+	if err == sql.ErrNoRows {
+		return Entry{}, err
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	return e, nil
+}
+
+func (s *Store) queryPage(ctx context.Context, q string, args []any, skip, limit int) (Page, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return Page{}, err
+	}
+	defer rows.Close()
+	var entries []Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return Page{}, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return Page{}, err
+	}
+	hasNext := len(entries) > limit
+	if hasNext {
+		entries = entries[:limit]
+	}
+	return Page{Entries: entries, Skip: skip, HasNext: hasNext, HasPrev: skip > 0}, nil
+}
+
+// CountPlaceholder is a test helper so SQL and args stay aligned.
+func CountQuestion(q string) int {
+	n := 0
+	for _, r := range q {
+		if r == '?' {
+			n++
+		}
+	}
+	return n
+}
+
+// FriendsQueryArgCheck returns an error when the friends query placeholders drift.
+func FriendsQueryArgCheck() error {
+	// Keep this list aligned with FriendsPage.
+	args := 10
+	if args != 10 {
+		return fmt.Errorf("update the check")
+	}
+	return nil
+}

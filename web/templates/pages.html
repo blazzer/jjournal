@@ -1,0 +1,57 @@
+{{define "login"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Log in · {{.SiteName}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+<div class="wrap narrow">
+<header class="top"><span class="brand">{{.SiteName}}</span></header>
+<main>
+<h1>Log in</h1>
+<p>Use the username and password from the journal you already keep. This site only reads.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/login">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Username <input name="username" autocomplete="username" required></label>
+<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+<button type="submit">Log in</button>
+</form>
+</main>
+</div>
+</body>
+</html>
+{{end}}
+
+{{define "list"}}
+{{template "start" .}}
+<h1>{{.Intro}}</h1>
+{{if .FilterNote}}<p class="note">{{.FilterNote}}</p>{{end}}
+{{if .AllURL}}<nav class="filters"><a href="{{.AllURL}}">All</a>{{range .Groups}} <a href="{{.URL}}">{{.Name}}</a>{{end}}</nav>{{end}}
+{{range .Entries}}{{template "entrycard" .}}{{else}}<p>No entries.</p>{{end}}
+{{template "pager" .}}
+{{template "end" .}}
+{{end}}
+
+{{define "entry"}}
+{{template "start" .}}
+{{template "entrycard" .Entry}}
+{{if .Native}}
+<section id="comments">
+<h2>Comments</h2>
+{{if .Comments}}<ul class="thread">{{range .Comments}}{{template "comment" .}}{{end}}</ul>{{else}}<p>No comments yet.</p>{{end}}
+<form method="post" action="{{.Action}}" id="reply">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="parent_id" value="{{.ReplyTo}}">
+{{if .ReplyTo}}<p>Replying to comment {{.ReplyTo}}. <a href="{{.Action}}#reply">Cancel</a></p>{{end}}
+<label>Comment <textarea name="body" rows="6" required></textarea></label>
+<button type="submit">Post comment</button>
+</form>
+</section>
+{{end}}
+{{template "end" .}}
+{{end}}

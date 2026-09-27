@@ -1,0 +1,91 @@
+{{define "start"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.Title}} · {{.SiteName}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+<div class="wrap">
+<header class="top"><a class="brand" href="/">{{.SiteName}}</a></header>
+<div class="columns">
+<aside class="side">
+{{if .LoggedIn}}
+<img class="sidepic" src="{{.Userpic}}" alt="">
+<p class="who"><a href="{{.ProfileURL}}">{{.Display}}</a></p>
+<nav>
+<a href="{{.FriendsURL}}">Friends</a>
+<a href="{{.JournalURL}}">Journal</a>
+<a href="/update">Update</a>
+<a href="/manage/friends">Manage friends</a>
+<a href="{{.ProfileURL}}">Profile</a>
+{{if .IsAdmin}}<a href="/admin">Sync</a>{{end}}
+</nav>
+<form method="post" action="/logout" class="logout">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit">Log out</button>
+</form>
+{{end}}
+</aside>
+<main>
+{{if .Banner}}<p class="banner">{{.Banner}}</p>{{end}}
+{{end}}
+
+{{define "end"}}
+</main>
+</div>
+<p class="foot">A private reading room. Nothing is posted back.</p>
+</div>
+</body>
+</html>
+{{end}}
+
+{{define "entrycard"}}
+<article class="entry">
+<header class="entry-head">
+<img class="userpic" src="{{.Userpic}}" alt="">
+<div>
+<p class="author"><a href="{{.AuthorURL}}">{{.Author}}</a>
+{{if .ViaLJ}}<span class="via">via LJ</span>{{end}}
+<img class="sec" src="{{.SecIcon}}" alt="{{.Security}}">
+</p>
+{{if .Community}}<p class="where">in community <a href="{{.CommunityURL}}">{{.Community}}</a></p>{{end}}
+<h2>{{.Subject}}</h2>
+<p class="when">{{.When}}</p>
+</div>
+</header>
+{{if .Mood}}<p class="meta">Mood: {{.Mood}}</p>{{end}}
+{{if .Music}}<p class="meta">Music: {{.Music}}</p>{{end}}
+<div class="body">{{.Body}}</div>
+<p class="comments"><a href="{{.CommentURL}}">{{.CommentLabel}}</a>{{if .LeaveURL}} · <a href="{{.LeaveURL}}">Leave a comment</a>{{end}}</p>
+</article>
+{{end}}
+
+{{define "pager"}}
+<nav class="pager">
+{{if .HasPrev}}<a href="{{.PrevURL}}">Previous 20</a>{{end}}
+{{if .HasNext}}<a href="{{.NextURL}}">Next 20</a>{{end}}
+</nav>
+{{end}}
+
+{{define "comment"}}
+<li class="comment" id="c{{.ID}}">
+{{if .Collapse}}<details><summary>Continue this thread</summary>{{end}}
+<p class="comment-meta">{{.Author}} · {{.When}}</p>
+<div class="comment-body">{{.Body}}</div>
+{{if .CanReply}}<a href="{{.Action}}?replyto={{.ID}}#reply">Reply</a>{{end}}
+{{if .CanDelete}}
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="delete">
+<input type="hidden" name="comment_id" value="{{.ID}}">
+<button type="submit">Delete</button>
+</form>
+{{end}}
+{{if .Children}}<ul>{{range .Children}}{{template "comment" .}}{{end}}</ul>{{end}}
+{{if .Collapse}}</details>{{end}}
+</li>
+{{end}}

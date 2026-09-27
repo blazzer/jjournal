@@ -1,0 +1,4 @@
+{$SITE_ADDRESS:journal.example.com} {
+	encode gzip
+	reverse_proxy journal:8080
+}

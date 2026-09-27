@@ -1,0 +1,35 @@
+services:
+  journal:
+    build: .
+    environment:
+      DB_PATH: /data/journal.db
+      LISTEN_ADDR: :8080
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      BASE_URL: ${BASE_URL:-https://journal.example.com}
+      SITE_NAME: ${SITE_NAME:-Journal}
+      LJ_SOURCE: ${LJ_SOURCE:-xmlrpc}
+      USERPIC_DIR: /data/userpics
+      IMAGE_CACHE_DIR: /data/images
+    volumes:
+      - journal-data:/data
+    expose:
+      - "8080"
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-journal.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - journal
+    restart: unless-stopped
+volumes:
+  journal-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,102 @@
+{{define "update"}}
+{{template "start" .}}
+<h1>Update</h1>
+<p>To hide part of a post on the reading page, wrap it in &lt;lj-cut text="Read more"&gt;hidden text&lt;/lj-cut&gt;.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/update">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Subject <input name="subject" maxlength="200"></label>
+<label>Entry <textarea name="body" rows="12" required></textarea></label>
+<label>Security
+<select name="security">
+<option value="public">Public</option>
+<option value="friends">Friends</option>
+<option value="private">Private</option>
+<option value="custom">Custom groups</option>
+</select>
+</label>
+<fieldset>
+<legend>Groups for a custom post</legend>
+{{range .Groups}}<label><input type="checkbox" name="group" value="{{.ID}}"> {{.Name}}</label>{{end}}
+</fieldset>
+<label>Mood <input name="mood" maxlength="80"></label>
+<label>Music <input name="music" maxlength="80"></label>
+<label>Userpic URL <input name="userpic" type="url"></label>
+<button type="submit">Post</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "manage"}}
+{{template "start" .}}
+<h1>Friends</h1>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<h2>On this site</h2>
+{{if not .Native}}<p>No one here yet.</p>{{end}}
+<ul class="people">
+{{range .Native}}<li>{{.Username}}
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="action" value="remove_friend">
+<input type="hidden" name="friend_id" value="{{.UserID}}">
+<button type="submit">Remove</button>
+</form></li>{{end}}
+</ul>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="add_friend">
+<label>Username <input name="username" required></label>
+{{range .Groups}}{{if eq .Origin "native"}}<label><input type="checkbox" name="group" value="{{.ID}}"> {{.Name}}</label>{{end}}{{end}}
+<button type="submit">Add friend</button>
+</form>
+<h2>Mirrored friends</h2>
+<p>These come from sync and cannot be edited here.</p>
+<ul class="people">{{range .LJ}}<li>{{.Username}}</li>{{else}}<li>None yet.</li>{{end}}</ul>
+<h2>Groups</h2>
+<ul class="people">
+{{range .Groups}}<li>{{.Name}} {{if eq .Origin "lj"}}(mirrored){{end}}
+{{if eq .Origin "native"}}<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="action" value="remove_group">
+<input type="hidden" name="group_id" value="{{.ID}}">
+<button type="submit">Remove</button>
+</form>{{end}}</li>{{end}}
+</ul>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="add_group">
+<label>New group <input name="name" maxlength="40" required></label>
+<button type="submit">Add group</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "profile"}}
+{{template "start" .}}
+<h1>{{.Display}}</h1>
+<img class="userpic" src="{{.Pic}}" alt="">
+<p>@{{.ProfileName}}</p>
+<p>Joined {{.Joined}}</p>
+{{if .Migrated}}<p>Writing here since {{.Migrated}}</p>{{end}}
+<p>{{.LJCount}} mirrored friends, {{.NativeCount}} friends here.</p>
+<p><a href="{{.JournalURL}}">Journal</a></p>
+{{template "end" .}}
+{{end}}
+
+{{define "admin"}}
+{{template "start" .}}
+<h1>Sync</h1>
+<table>
+<thead><tr><th>User</th><th>Status</th><th>Last sync</th><th>Moved</th><th>Error</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td>{{.Username}}</td>
+<td>{{.Status}}</td>
+<td>{{.Synced}}</td>
+<td>{{.Migrated}}</td>
+<td>{{.Error}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{template "end" .}}
+{{end}}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>alice</title>
+    <item>
+      <title>Hello</title>
+      <link>https://alice.livejournal.com/1001.html</link>
+      <pubDate>Wed, 01 May 2024 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Hi there</p>]]></description>
+      <lj:security>public</lj:security>
+      <lj:reply-count>3</lj:reply-count>
+      <lj:mood>cheerful</lj:mood>
+      <lj:music>Song</lj:music>
+    </item>
+    <item>
+      <title>Locked</title>
+      <link>https://alice.livejournal.com/1002.html</link>
+      <pubDate>Thu, 02 May 2024 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Secret</p>]]></description>
+      <lj:security>friends</lj:security>
+      <lj:reply-count>0</lj:reply-count>
+    </item>
+  </channel>
+</rss>

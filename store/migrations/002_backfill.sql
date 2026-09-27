@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN friends_backfill_skip INTEGER NOT NULL DEFAULT 0;
