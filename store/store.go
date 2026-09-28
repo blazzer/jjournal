@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/hex"
@@ -108,6 +109,62 @@ func sqliteReadOnlyDSN(path string) string {
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// ContentHash is a stable digest of every application table. Tests use it to prove a request did not write.
+func (s *Store) ContentHash(ctx context.Context) (string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return "", err
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	sum := sha256.New()
+	for _, table := range tables {
+		if _, err := sum.Write([]byte(table)); err != nil {
+			return "", err
+		}
+		q, err := s.db.QueryContext(ctx, `SELECT * FROM "`+strings.ReplaceAll(table, `"`, `""`)+`" ORDER BY rowid`)
+		if err != nil {
+			return "", err
+		}
+		cols, err := q.Columns()
+		if err != nil {
+			q.Close()
+			return "", err
+		}
+		for q.Next() {
+			dest := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range dest {
+				ptrs[i] = &dest[i]
+			}
+			if err := q.Scan(ptrs...); err != nil {
+				q.Close()
+				return "", err
+			}
+			for _, v := range dest {
+				fmt.Fprintf(sum, "%v\x1f", v)
+			}
+			sum.Write([]byte{'\n'})
+		}
+		if err := q.Err(); err != nil {
+			q.Close()
+			return "", err
+		}
+		q.Close()
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
 
 // Ready reports whether the database answers and every migration is applied.
 func (s *Store) Ready(ctx context.Context) error {

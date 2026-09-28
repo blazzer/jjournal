@@ -1,4 +1,4 @@
-package web
+package classic
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"journal/render"
 	"journal/store"
+	"journal/web"
 )
 
 type baseView struct {
@@ -78,8 +79,8 @@ type commentView struct {
 	Children  []*commentView
 }
 
-func (s *Server) base(u store.User, title, csrf string) baseView {
-	pic := s.pictureURL(u.Username)
+func base(s *web.Server, u store.User, title, csrf string) baseView {
+	pic := pictureURL(s, u.Username)
 	return baseView{
 		SiteName:   s.Config.SiteName,
 		Title:      title,
@@ -115,15 +116,15 @@ func banner(u store.User) string {
 	}
 }
 
-func (s *Server) pictureURL(username string) string {
+func pictureURL(s *web.Server, username string) string {
 	raw, err := s.Store.LatestUserpic(context.Background(), username)
 	if err != nil || raw == "" {
 		return "/static/userhead.svg"
 	}
-	return s.picture(raw)
+	return picture(s, raw)
 }
 
-func (s *Server) picture(raw string) string {
+func picture(s *web.Server, raw string) string {
 	if raw == "" {
 		return "/static/userhead.svg"
 	}
@@ -143,7 +144,7 @@ func (s *Server) picture(raw string) string {
 	return "/static/userhead.svg"
 }
 
-func (s *Server) localUsers() map[string]string {
+func localUsers(s *web.Server) map[string]string {
 	users, err := s.Store.ListUsers(context.Background())
 	if err != nil {
 		return map[string]string{}
@@ -155,16 +156,16 @@ func (s *Server) localUsers() map[string]string {
 	return out
 }
 
-func (s *Server) entries(list []store.Entry, full bool) []entryView {
-	locals := s.localUsers()
+func entries(s *web.Server, list []store.Entry, full bool) []entryView {
+	locals := localUsers(s)
 	out := make([]entryView, 0, len(list))
 	for _, e := range list {
-		out = append(out, s.oneEntry(e, full, locals))
+		out = append(out, oneEntry(s, e, full, locals))
 	}
 	return out
 }
 
-func (s *Server) oneEntry(e store.Entry, full bool, locals map[string]string) entryView {
+func oneEntry(s *web.Server, e store.Entry, full bool, locals map[string]string) entryView {
 	readMore := e.URL
 	if e.Source == "native" {
 		readMore = "/~" + e.Journal + "/" + strconv.FormatInt(e.ID, 10) + ".html"
@@ -194,7 +195,7 @@ func (s *Server) oneEntry(e store.Entry, full bool, locals map[string]string) en
 		Mood:      e.Mood,
 		Music:     e.Music,
 		Body:      template.HTML(body),
-		Userpic:   s.picture(e.UserpicURL),
+		Userpic:   picture(s, e.UserpicURL),
 	}
 	if e.Subject == "" {
 		v.Subject = "(no subject)"
@@ -251,7 +252,7 @@ func pagerURLs(path, filter string, skip int, hasPrev, hasNext bool) (prev, next
 	return prev, next
 }
 
-func (s *Server) thread(comments []store.Comment, csrf, action string, viewer store.User, entryAuthorID int64) []*commentView {
+func thread(s *web.Server, comments []store.Comment, csrf, action string, viewer store.User, entryAuthorID int64) []*commentView {
 	flat := make([]render.Comment, len(comments))
 	byID := map[int64]store.Comment{}
 	for i, c := range comments {
@@ -265,7 +266,7 @@ func (s *Server) thread(comments []store.Comment, csrf, action string, viewer st
 			src := byID[n.ID]
 			body := "[deleted]"
 			if !n.Deleted {
-				body = render.RenderBody(n.BodyHTML, render.Options{Full: true, LocalUsers: s.localUsers(), SignImage: func(src string) string {
+				body = render.RenderBody(n.BodyHTML, render.Options{Full: true, LocalUsers: localUsers(s), SignImage: func(src string) string {
 					if s.Images == nil {
 						return ""
 					}

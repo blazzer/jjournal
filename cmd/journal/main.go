@@ -21,6 +21,7 @@ import (
 	"journal/store"
 	jsync "journal/sync"
 	"journal/web"
+	"journal/web/classic"
 )
 
 func main() {
@@ -135,7 +136,12 @@ func serve(ctx context.Context, cfg web.Config) error {
 	worker.Pauses = oc
 	worker.Images = jobs
 	reg := metrics.New()
-	h, err := web.New(cfg, st, src, worker, pics, images)
+	front, err := classic.New()
+	if err != nil {
+		st.Close()
+		return err
+	}
+	h, err := web.New(cfg, st, src, worker, pics, images, front)
 	if err != nil {
 		st.Close()
 		return err

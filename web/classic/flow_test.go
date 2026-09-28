@@ -1,4 +1,4 @@
-package web
+package classic_test
 
 import (
 	"bytes"
@@ -15,23 +15,25 @@ import (
 
 	"journal/lj"
 	"journal/store"
+	"journal/web"
+	"journal/web/classic"
 )
 
 func TestConfigFrom(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
 	env := map[string]string{"SECRET_KEY": key}
-	cfg, err := ConfigFrom(func(k string) string { return env[k] })
+	cfg, err := web.ConfigFrom(func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.SiteName != "Journal" || cfg.LJSource != "xmlrpc" || cfg.ListenAddr != ":8080" {
 		t.Fatalf("%+v", cfg)
 	}
-	if _, err := ConfigFrom(func(string) string { return "" }); err == nil {
+	if _, err := web.ConfigFrom(func(string) string { return "" }); err == nil {
 		t.Fatal("missing key")
 	}
 	env["LJ_SOURCE"] = "nope"
-	if _, err := ConfigFrom(func(k string) string { return env[k] }); err == nil {
+	if _, err := web.ConfigFrom(func(k string) string { return env[k] }); err == nil {
 		t.Fatal("bad source")
 	}
 }
@@ -54,7 +56,7 @@ func TestParseUserPath(t *testing.T) {
 		{"/~bob/nope", "", "", 0, false},
 	}
 	for _, tc := range cases {
-		user, kind, id, ok := ParseUserPath(tc.path)
+		user, kind, id, ok := web.ParseUserPath(tc.path)
 		if user != tc.user || kind != tc.kind || id != tc.id || ok != tc.ok {
 			t.Fatalf("%s -> %s %s %d %v", tc.path, user, kind, id, ok)
 		}
@@ -179,7 +181,7 @@ func TestSiteFlow(t *testing.T) {
 	_ = pw
 }
 
-func testApp(t *testing.T) (*store.Store, *Server, *httptest.Server, *http.Client) {
+func testApp(t *testing.T) (*store.Store, *web.Server, *httptest.Server, *http.Client) {
 	t.Helper()
 	key := bytes.Repeat([]byte{9}, 32)
 	st, err := store.Open(t.TempDir()+"/t.db", key)
@@ -188,10 +190,14 @@ func testApp(t *testing.T) (*store.Store, *Server, *httptest.Server, *http.Clien
 	}
 	t.Cleanup(func() { st.Close() })
 	fake := &lj.Fake{Password: map[string]string{"ada": lj.PasswordMD5("hello-password")}}
-	h, err := New(Config{
+	front, err := classic.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := web.New(web.Config{
 		Secret: key, BaseURL: "http://127.0.0.1:8080", SiteName: "Journal",
 		LJSource: "xmlrpc", UserpicDir: t.TempDir(), ImageDir: t.TempDir(),
-	}, st, fake, nil, nil, nil)
+	}, st, fake, nil, nil, nil, front)
 	if err != nil {
 		t.Fatal(err)
 	}

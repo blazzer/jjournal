@@ -4,18 +4,15 @@ import (
 	"context"
 	"embed"
 	"errors"
-	"html/template"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
-	"sync"
 
 	"journal/lj"
 	"journal/metrics"
@@ -25,7 +22,7 @@ import (
 	jsync "journal/sync"
 )
 
-//go:embed templates/*.html static/*
+//go:embed static/*
 var assets embed.FS
 
 // Server is the HTTP application.
@@ -37,17 +34,14 @@ type Server struct {
 	Pics    *render.Proxy
 	Images  *render.Proxy
 	Metrics *metrics.Registry
-	tmpl    *template.Template
+	Front   FrontEnd
+	Limit   Limiter
 	files   http.Handler
 	handler http.Handler
 }
 
 // New builds a handler. Templates are parsed from the embedded files.
-func New(cfg Config, st *store.Store, src lj.LJSource, worker *jsync.Worker, pics, images *render.Proxy) (*Server, error) {
-	tmpl, err := template.ParseFS(assets, "templates/*.html")
-	if err != nil {
-		return nil, err
-	}
+func New(cfg Config, st *store.Store, src lj.LJSource, worker *jsync.Worker, pics, images *render.Proxy, front FrontEnd) (*Server, error) {
 	sub, err := fs.Sub(assets, "static")
 	if err != nil {
 		return nil, err
@@ -59,7 +53,7 @@ func New(cfg Config, st *store.Store, src lj.LJSource, worker *jsync.Worker, pic
 		Worker: worker,
 		Pics:   pics,
 		Images: images,
-		tmpl:   tmpl,
+		Front:  front,
 		files:  http.StripPrefix("/static/", http.FileServer(http.FS(sub))),
 	}
 	s.handler = s.routes()
@@ -105,7 +99,7 @@ func Run(ctx context.Context, cfg Config) error {
 	go FetchImages(ctx, jobs, pics, images)
 	go CacheJanitor(ctx, []string{picDir, imgDir}, 256<<20)
 	go worker.Run(ctx)
-	h, err := New(cfg, st, src, worker, pics, images)
+	h, err := New(cfg, st, src, worker, pics, images, nil)
 	if err != nil {
 		return err
 	}
@@ -135,21 +129,21 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /static/", s.files)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.HandleFunc("GET /login", s.login)
-	mux.HandleFunc("POST /login", s.login)
-	mux.HandleFunc("GET /logout", s.authed(s.logout))
-	mux.HandleFunc("POST /logout", s.authed(s.logout))
+	mux.HandleFunc("GET /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
+	mux.HandleFunc("POST /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
+	mux.HandleFunc("GET /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
+	mux.HandleFunc("POST /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
 	mux.HandleFunc("GET /img", s.authed(func(w http.ResponseWriter, r *http.Request, _ store.User) {
 		s.Images.ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /userpics/{name}", s.authed(s.userpic))
-	mux.HandleFunc("GET /{$}", s.authed(s.home))
-	mux.HandleFunc("GET /update", s.authed(s.update))
-	mux.HandleFunc("POST /update", s.authed(s.update))
-	mux.HandleFunc("GET /manage/friends", s.authed(s.manage))
-	mux.HandleFunc("POST /manage/friends", s.authed(s.manage))
-	mux.HandleFunc("GET /admin", s.authed(s.admin))
-	mux.HandleFunc("POST /admin", s.authed(s.admin))
+	mux.HandleFunc("GET /{$}", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Home(w, r, s, u) }))
+	mux.HandleFunc("GET /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Update(w, r, s, u) }))
+	mux.HandleFunc("POST /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Update(w, r, s, u) }))
+	mux.HandleFunc("GET /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Manage(w, r, s, u) }))
+	mux.HandleFunc("POST /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Manage(w, r, s, u) }))
+	mux.HandleFunc("GET /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
+	mux.HandleFunc("POST /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
 	mux.HandleFunc("GET /{path...}", s.userPath)
 	mux.HandleFunc("POST /{path...}", s.userPath)
 	return s.wrap(mux)
@@ -168,13 +162,13 @@ func (s *Server) userPath(w http.ResponseWriter, r *http.Request) {
 	s.withUser(w, r, func(w http.ResponseWriter, r *http.Request, viewer store.User) {
 		switch kind {
 		case "friends":
-			s.friends(w, r, viewer, user)
+			s.Front.Friends(w, r, s, viewer, user)
 		case "journal":
-			s.journal(w, r, viewer, user)
+			s.Front.Journal(w, r, s, viewer, user)
 		case "profile":
-			s.profile(w, r, viewer, user)
+			s.Front.Profile(w, r, s, viewer, user)
 		case "entry":
-			s.entry(w, r, viewer, user, id)
+			s.Front.Entry(w, r, s, viewer, user, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -218,11 +212,17 @@ func (s *Server) wrap(next http.Handler) http.Handler {
 			id = hex.EncodeToString(b[:])
 		}
 		w.Header().Set("X-Request-ID", id)
+		if s.Limit != nil {
+			if err := s.Limit.Allow(r); err != nil {
+				WriteError(w, r, err)
+				return
+			}
+		}
 		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(sw, r)
 		attrs := []any{"route", r.Pattern, "status", sw.code, "duration", time.Since(start).String(), "request_id", id}
-		if u, ok := s.currentUser(r); ok {
+		if u, ok := s.CurrentUser(r); ok {
 			attrs = append(attrs, "user", u.ID)
 		}
 		slog.Info("request", attrs...)
@@ -248,7 +248,7 @@ func saneRequestID(id string) bool {
 }
 
 func (s *Server) withUser(w http.ResponseWriter, r *http.Request, fn func(http.ResponseWriter, *http.Request, store.User)) {
-	u, ok := s.currentUser(r)
+	u, ok := s.CurrentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
@@ -256,24 +256,23 @@ func (s *Server) withUser(w http.ResponseWriter, r *http.Request, fn func(http.R
 	fn(w, r, u)
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
-	s.renderCode(w, http.StatusOK, name, data)
+func (s *Server) page(fn func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Front == nil {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
+		fn(w, r, store.User{})
+	}
 }
 
-var renderPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
-
-func (s *Server) renderCode(w http.ResponseWriter, code int, name string, data any) {
-	buf := renderPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer renderPool.Put(buf)
-	if err := s.tmpl.ExecuteTemplate(buf, name, data); err != nil {
-		slog.Error("template", "name", name, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+func (s *Server) userpic(w http.ResponseWriter, r *http.Request, _ store.User) {
+	path, err := render.LocalUserpicPath(s.Pics.Dir, r.URL.Path)
+	if err != nil {
+		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(code)
-	_, _ = buf.WriteTo(w)
+	http.ServeFile(w, r, path)
 }
 
 // MetricsHandler serves the Prometheus text exposition.
