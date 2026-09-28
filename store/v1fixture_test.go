@@ -68,12 +68,12 @@ func TestV1SeedShape(t *testing.T) {
 	var users, ljEntries, nativeEntries, comments, deleted, sessions, ljFriends, nativeFriends, groups, vis int
 	row := s.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM users),
-		(SELECT COUNT(*) FROM entries WHERE source='lj'),
+		(SELECT COUNT(*) FROM entries WHERE source='remote'),
 		(SELECT COUNT(*) FROM entries WHERE source='native'),
 		(SELECT COUNT(*) FROM comments),
 		(SELECT COUNT(*) FROM comments WHERE deleted=1),
 		(SELECT COUNT(*) FROM sessions),
-		(SELECT COUNT(*) FROM lj_friends),
+		(SELECT COUNT(*) FROM remote_friends),
 		(SELECT COUNT(*) FROM native_friends),
 		(SELECT COUNT(*) FROM friend_groups),
 		(SELECT COUNT(*) FROM entry_visibility)`)

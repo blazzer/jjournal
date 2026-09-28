@@ -102,7 +102,7 @@ func TestV1SurvivesMigrations(t *testing.T) {
 	}
 	var event, display string
 	var parentID int
-	if err := s.db.QueryRow(`SELECT event_time FROM entries WHERE lj_itemid=1000`).Scan(&event); err != nil {
+	if err := s.db.QueryRow(`SELECT event_time FROM entries WHERE remote_id='1000'`).Scan(&event); err != nil {
 		t.Fatal(err)
 	}
 	if event != "2024-03-01T00:00:00.000Z" {
@@ -129,7 +129,7 @@ func TestEmptyDatabaseMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 4 {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 5 {
 		t.Fatal(n, err)
 	}
 }

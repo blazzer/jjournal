@@ -37,6 +37,6 @@ func (s *Store) PutHostPause(ctx context.Context, host string, until time.Time, 
 
 // SetNextSync sets the next time an account should sync.
 func (s *Store) SetNextSync(ctx context.Context, userID int64, next time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET next_sync_at=? WHERE id=?`, FormatTime(next), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET next_sync_at=? WHERE user_id=? AND service='livejournal'`, FormatTime(next), userID)
 	return err
 }

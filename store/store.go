@@ -44,6 +44,7 @@ type User struct {
 	ID              int64
 	Username        string
 	DisplayName     string
+	IsAdmin         bool
 	MigratedAt      time.Time
 	SyncStatus      string
 	SyncError       string
@@ -197,7 +198,7 @@ func NormalizeSkip(skip int) int {
 }
 
 // IsAdmin reports whether user is the first account.
-func IsAdmin(u User) bool { return u.ID == 1 }
+func IsAdmin(u User) bool { return u.IsAdmin }
 
 // UpsertLogin creates or refreshes a user after a successful LJ login.
 func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cookie string) (User, error) {
@@ -223,15 +224,20 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 		if display == "" {
 			display = username
 		}
-		res, err := s.db.ExecContext(ctx, `INSERT INTO users(
-			lj_username, display_name, lj_pw_md5_enc, lj_session_enc, sync_status, sync_error,
-			next_sync_at, created_at) VALUES (?, ?, ?, ?, 'ok', '', ?, ?)`,
-			username, display, pwEnc, nullBytes(cookieEnc), FormatTime(now), FormatTime(now))
+		res, err := s.db.ExecContext(ctx, `INSERT INTO users(handle, display_name, is_admin, ui, created_at)
+			VALUES (?, ?, CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 1 ELSE 0 END, 'classic', ?)`,
+			username, display, FormatTime(now))
 		if err != nil {
 			return User{}, err
 		}
 		id, err := res.LastInsertId()
 		if err != nil {
+			return User{}, err
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO accounts(
+			user_id, service, username, secret_scheme, password_enc, session_enc, sync_status, next_sync_at)
+			VALUES (?, 'livejournal', ?, 'legacy', ?, ?, 'ok', ?)`,
+			id, username, pwEnc, nullBytes(cookieEnc), FormatTime(now)); err != nil {
 			return User{}, err
 		}
 		if err := s.ensureDefaultGroup(ctx, id); err != nil {
@@ -246,9 +252,13 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 	if display == "" {
 		display = existing.DisplayName
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE users SET display_name=?, lj_pw_md5_enc=?, lj_session_enc=?,
-		sync_status='ok', sync_error='', sync_fail_count=0, blocked_until=NULL, next_sync_at=? WHERE id=?`,
-		display, pwEnc, nullBytes(cookieEnc), FormatTime(now), existing.ID)
+	if _, err = s.db.ExecContext(ctx, `UPDATE users SET display_name=? WHERE id=?`, display, existing.ID); err != nil {
+		return User{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=?,
+		sync_status='ok', sync_error='', sync_fail_count=0, blocked_until=NULL, next_sync_at=?
+		WHERE user_id=? AND service='livejournal'`,
+		pwEnc, nullBytes(cookieEnc), FormatTime(now), existing.ID)
 	if err != nil {
 		return User{}, err
 	}
@@ -268,23 +278,28 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (User, erro
 	if err != nil {
 		return User{}, err
 	}
-	return s.scanUser(s.db.QueryRowContext(ctx, userSelect+` WHERE lj_username=?`, username))
+	return s.scanUser(s.db.QueryRowContext(ctx, userSelect+` WHERE u.handle=?`, username))
 }
 
 // UserByID loads a user.
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
-	return s.scanUser(s.db.QueryRowContext(ctx, userSelect+` WHERE id=?`, id))
+	return s.scanUser(s.db.QueryRowContext(ctx, userSelect+` WHERE u.id=?`, id))
 }
 
-const userSelect = `SELECT id, lj_username, display_name, migrated_at, sync_status, sync_error, sync_fail_count,
-	last_synced_at, friends_synced_at, blocked_until, next_sync_at, created_at, friends_backfill_skip FROM users`
+const userSelect = `SELECT u.id, u.handle, u.display_name, u.is_admin, u.migrated_at,
+	COALESCE(a.sync_status,'ok'), COALESCE(a.sync_error,''), COALESCE(a.sync_fail_count,0),
+	a.last_synced_at, a.friends_synced_at, a.blocked_until, a.next_sync_at, u.created_at,
+	COALESCE(a.walk_skip,0)
+	FROM users u LEFT JOIN accounts a ON a.user_id = u.id AND a.service = 'livejournal'`
 
 func (s *Store) scanUser(row *sql.Row) (User, error) {
 	var u User
 	var migrated, last, friends, blocked, next sql.NullString
 	var created string
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
+	var admin int
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
 		&last, &friends, &blocked, &next, &created, &u.BackfillSkip)
+	u.IsAdmin = admin != 0
 	if err != nil {
 		return User{}, err
 	}
@@ -299,7 +314,7 @@ func (s *Store) scanUser(row *sql.Row) (User, error) {
 
 // ListUsers returns every account, oldest first.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, userSelect+` ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, userSelect+` ORDER BY u.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +324,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		var u User
 		var migrated, last, friends, blocked, next sql.NullString
 		var created string
-		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
+		var admin int
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
 			&last, &friends, &blocked, &next, &created, &u.BackfillSkip); err != nil {
 			return nil, err
 		}
@@ -318,6 +334,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		u.FriendsSyncedAt = parseTime(friends)
 		u.BlockedUntil = parseTime(blocked)
 		u.NextSyncAt = parseTime(next)
+		u.IsAdmin = admin != 0
 		u.CreatedAt = parseTime(sql.NullString{String: created, Valid: created != ""})
 		out = append(out, u)
 	}
@@ -327,7 +344,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 // Secrets returns the decrypted password hash and session cookie.
 func (s *Store) Secrets(ctx context.Context, userID int64) (pwMD5, cookie string, err error) {
 	var pw, sess []byte
-	err = s.db.QueryRowContext(ctx, `SELECT lj_pw_md5_enc, lj_session_enc FROM users WHERE id=?`, userID).Scan(&pw, &sess)
+	err = s.db.QueryRowContext(ctx, `SELECT password_enc, session_enc FROM accounts WHERE user_id=? AND service='livejournal'`, userID).Scan(&pw, &sess)
 	if err != nil {
 		return "", "", err
 	}
@@ -361,14 +378,14 @@ func (s *Store) SaveSecrets(ctx context.Context, userID int64, pwMD5, cookie str
 			return err
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE users SET lj_pw_md5_enc=?, lj_session_enc=? WHERE id=?`, pwEnc, nullBytes(cookieEnc), userID)
+	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=? WHERE user_id=? AND service='livejournal'`, pwEnc, nullBytes(cookieEnc), userID)
 	return err
 }
 
 // MarkSyncOK records a successful sync.
 func (s *Store) MarkSyncOK(ctx context.Context, userID int64, at, next time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='ok', sync_error='', sync_fail_count=0,
-		blocked_until=NULL, last_synced_at=?, next_sync_at=? WHERE id=?`, FormatTime(at), FormatTime(next), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='ok', sync_error='', sync_fail_count=0,
+		blocked_until=NULL, last_synced_at=?, next_sync_at=? WHERE user_id=? AND service='livejournal'`, FormatTime(at), FormatTime(next), userID)
 	return err
 }
 
@@ -377,43 +394,43 @@ func (s *Store) SetBackfillSkip(ctx context.Context, userID int64, skip int) err
 	if skip < 0 {
 		skip = 0
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET friends_backfill_skip=? WHERE id=?`, skip, userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET walk_skip=? WHERE user_id=? AND service='livejournal'`, skip, userID)
 	return err
 }
 
 // MarkSyncError records a retryable failure and the next attempt.
 func (s *Store) MarkSyncError(ctx context.Context, userID int64, msg string, failCount int, next time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='error', sync_error=?, sync_fail_count=?, next_sync_at=? WHERE id=?`,
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='error', sync_error=?, sync_fail_count=?, next_sync_at=? WHERE user_id=? AND service='livejournal'`,
 		clamp(msg, 240), failCount, FormatTime(next), userID)
 	return err
 }
 
 // MarkAuthFailed stops sync until the user logs in again.
 func (s *Store) MarkAuthFailed(ctx context.Context, userID int64, msg string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='auth_failed', sync_error=? WHERE id=?`, clamp(msg, 240), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='auth_failed', sync_error=? WHERE user_id=? AND service='livejournal'`, clamp(msg, 240), userID)
 	return err
 }
 
 // MarkBlocked pauses sync until until.
 func (s *Store) MarkBlocked(ctx context.Context, userID int64, msg string, until time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='blocked', sync_error=?, blocked_until=?, next_sync_at=? WHERE id=?`,
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='blocked', sync_error=?, blocked_until=?, next_sync_at=? WHERE user_id=? AND service='livejournal'`,
 		clamp(msg, 240), FormatTime(until), FormatTime(until), userID)
 	return err
 }
 
 // TouchFriends records a friend-list refresh.
 func (s *Store) TouchFriends(ctx context.Context, userID int64, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET friends_synced_at=? WHERE id=?`, FormatTime(at), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET friends_synced_at=? WHERE user_id=? AND service='livejournal'`, FormatTime(at), userID)
 	return err
 }
 
 // UsersDue returns accounts the worker should sync now.
 func (s *Store) UsersDue(ctx context.Context, now time.Time) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM users
-		WHERE sync_status != 'auth_failed'
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM accounts
+		WHERE service='livejournal' AND sync_status != 'auth_failed'
 		  AND (blocked_until IS NULL OR blocked_until <= ?)
 		  AND (next_sync_at IS NULL OR next_sync_at <= ?)
-		ORDER BY id`, FormatTime(now), FormatTime(now))
+		ORDER BY user_id`, FormatTime(now), FormatTime(now))
 	if err != nil {
 		return nil, err
 	}

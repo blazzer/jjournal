@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -82,15 +83,15 @@ func (s *Store) UpsertLJEntry(ctx context.Context, viewerID int64, in LJEntryIn)
 	defer tx.Rollback()
 	now := time.Now().UTC()
 	var id int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM entries WHERE source='lj' AND journal_lj_username=? AND lj_itemid=?`, in.Journal, in.ItemID).Scan(&id)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM entries WHERE source='remote' AND service='livejournal' AND journal_username=? AND remote_id=?`, in.Journal, strconv.FormatInt(in.ItemID, 10)).Scan(&id)
 	if err == sql.ErrNoRows {
 		res, err := tx.ExecContext(ctx, `INSERT INTO entries(
-			source, author_lj_username, journal_lj_username, lj_itemid, lj_url, subject, body_html,
-			security, allowmask, event_time, userpic_url, mood, music, lj_comment_count, journal_type,
-			created_at, updated_at) VALUES ('lj', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			in.Author, in.Journal, in.ItemID, in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask,
+			service, origin, source, author_username, journal_username, remote_id, url, subject, body_html,
+			security, allowmask, event_time, userpic_url, mood, music, comment_count, journal_type,
+			last_seen_at, created_at, updated_at) VALUES ('livejournal', 'friendspage', 'remote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			in.Author, in.Journal, strconv.FormatInt(in.ItemID, 10), in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask,
 			FormatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType,
-			FormatTime(now), FormatTime(now))
+			FormatTime(now), FormatTime(now), FormatTime(now))
 		if err != nil {
 			return 0, err
 		}
@@ -101,11 +102,11 @@ func (s *Store) UpsertLJEntry(ctx context.Context, viewerID int64, in LJEntryIn)
 	} else if err != nil {
 		return 0, err
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE entries SET author_lj_username=?, lj_url=?, subject=?, body_html=?,
-			security=?, allowmask=?, event_time=?, userpic_url=?, mood=?, music=?, lj_comment_count=?,
-			journal_type=?, updated_at=? WHERE id=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE entries SET author_username=?, url=?, subject=?, body_html=?,
+			security=?, allowmask=?, event_time=?, userpic_url=?, mood=?, music=?, comment_count=?,
+			journal_type=?, last_seen_at=?, updated_at=? WHERE id=?`,
 			in.Author, in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask, FormatTime(in.EventTime),
-			in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType, FormatTime(now), id)
+			in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType, FormatTime(now), FormatTime(now), id)
 		if err != nil {
 			return 0, err
 		}
@@ -143,11 +144,11 @@ func (s *Store) CreateNativeEntry(ctx context.Context, authorID int64, in LJEntr
 	}
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `INSERT INTO entries(
-		source, author_lj_username, journal_lj_username, lj_url, subject, body_html, security, allowmask,
-		event_time, userpic_url, mood, music, lj_comment_count, journal_type, created_at, updated_at)
-		VALUES ('native', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 0, 'P', ?, ?)`,
+		service, origin, source, author_username, journal_username, url, subject, body_html, security, allowmask,
+		event_time, userpic_url, mood, music, comment_count, journal_type, last_seen_at, created_at, updated_at)
+		VALUES ('local', 'native', 'native', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 0, 'P', ?, ?, ?)`,
 		author.Username, author.Username, in.Subject, in.BodyHTML, in.Security, in.AllowMask,
-		FormatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, FormatTime(now), FormatTime(now))
+		FormatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, FormatTime(now), FormatTime(now), FormatTime(now))
 	if err != nil {
 		return 0, err
 	}
@@ -201,7 +202,7 @@ func (s *Store) AddComment(ctx context.Context, entryID, parentID, authorID int6
 
 // ListComments returns comments on an entry in id order.
 func (s *Store) ListComments(ctx context.Context, entryID int64) ([]Comment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.entry_id, c.parent_id, c.author_user_id, u.lj_username, c.body_html, c.created_at, c.deleted
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.entry_id, c.parent_id, c.author_user_id, u.handle, c.body_html, c.created_at, c.deleted
 		FROM comments c JOIN users u ON u.id = c.author_user_id
 		WHERE c.entry_id=? ORDER BY c.id`, entryID)
 	if err != nil {
@@ -233,7 +234,7 @@ func (s *Store) DeleteComment(ctx context.Context, viewerID, commentID int64) er
 	err := s.db.QueryRowContext(ctx, `SELECT c.author_user_id, eu.id
 		FROM comments c
 		JOIN entries e ON e.id = c.entry_id
-		JOIN users eu ON eu.lj_username = e.author_lj_username
+		JOIN users eu ON eu.handle = e.author_username
 		WHERE c.id=?`, commentID).Scan(&authorID, &entryAuthor)
 	if err != nil {
 		return err
@@ -248,7 +249,7 @@ func (s *Store) DeleteComment(ctx context.Context, viewerID, commentID int64) er
 // LatestUserpic returns the newest userpic URL for a username.
 func (s *Store) LatestUserpic(ctx context.Context, username string) (string, error) {
 	var url string
-	err := s.db.QueryRowContext(ctx, `SELECT userpic_url FROM entries WHERE author_lj_username=? AND userpic_url != '' ORDER BY event_time DESC, id DESC LIMIT 1`, username).Scan(&url)
+	err := s.db.QueryRowContext(ctx, `SELECT userpic_url FROM entries WHERE author_username=? AND userpic_url != '' ORDER BY event_time DESC, id DESC LIMIT 1`, username).Scan(&url)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

@@ -204,7 +204,7 @@ func oneEntry(s *web.Server, e store.Entry, full bool, locals map[string]string)
 		v.Community = e.Journal
 		v.CommunityURL = profileURL(e.Journal, locals)
 	}
-	if e.Source == "lj" {
+	if e.Source == "remote" {
 		v.ViaLJ = true
 		v.CommentLabel = fmt.Sprintf("%d comments on LJ", e.CommentCount)
 		v.CommentURL = e.URL

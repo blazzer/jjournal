@@ -47,7 +47,11 @@ func (s *Store) ReplaceLJFriends(ctx context.Context, userID int64, friends []lj
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM lj_friends WHERE user_id=?`, userID); err != nil {
+	var accountID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM accounts WHERE user_id=? AND service='livejournal'`, userID).Scan(&accountID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM remote_friends WHERE account_id=?`, accountID); err != nil {
 		return err
 	}
 	for _, f := range friends {
@@ -55,8 +59,8 @@ func (s *Store) ReplaceLJFriends(ctx context.Context, userID int64, friends []lj
 		if err != nil {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO lj_friends(user_id, friend_lj_username, groupmask, synced_at) VALUES (?, ?, ?, ?)`,
-			userID, name, f.GroupMask, FormatTime(at)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO remote_friends(account_id, username, groupmask, synced_at) VALUES (?, ?, ?, ?)`,
+			accountID, name, f.GroupMask, FormatTime(at)); err != nil {
 			return err
 		}
 	}
@@ -65,7 +69,9 @@ func (s *Store) ReplaceLJFriends(ctx context.Context, userID int64, friends []lj
 
 // ListLJFriends returns synced friends.
 func (s *Store) ListLJFriends(ctx context.Context, userID int64) ([]LJFriendRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT friend_lj_username, groupmask FROM lj_friends WHERE user_id=? ORDER BY friend_lj_username`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.username, f.groupmask FROM remote_friends f
+		JOIN accounts a ON a.id = f.account_id
+		WHERE a.user_id=? AND a.service='livejournal' ORDER BY f.username`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,9 +108,9 @@ func (s *Store) RemoveNativeFriend(ctx context.Context, userID, friendID int64) 
 
 // ListNativeFriends returns native friends.
 func (s *Store) ListNativeFriends(ctx context.Context, userID int64) ([]NativeFriendRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT n.friend_user_id, u.lj_username, n.groupmask
+	rows, err := s.db.QueryContext(ctx, `SELECT n.friend_user_id, u.handle, n.groupmask
 		FROM native_friends n JOIN users u ON u.id = n.friend_user_id
-		WHERE n.user_id=? ORDER BY u.lj_username`, userID)
+		WHERE n.user_id=? ORDER BY u.handle`, userID)
 	if err != nil {
 		return nil, err
 	}
