@@ -15,7 +15,6 @@ import (
 type XMLRPC struct {
 	Client   *http.Client
 	Endpoint string
-	Gate     *Gate
 }
 
 // NewXMLRPC returns a client for endpoint. An empty endpoint uses the live URL.
@@ -24,13 +23,6 @@ func NewXMLRPC(client *http.Client, endpoint string) *XMLRPC {
 		endpoint = XMLRPCEndpoint
 	}
 	return &XMLRPC{Client: client, Endpoint: endpoint}
-}
-
-func (x *XMLRPC) client() *http.Client {
-	if x.Client != nil {
-		return x.Client
-	}
-	return &http.Client{Timeout: 30 * time.Second}
 }
 
 func (x *XMLRPC) call(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
@@ -43,11 +35,11 @@ func (x *XMLRPC) call(ctx context.Context, method string, params map[string]any)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
-	req.Header.Set("User-Agent", UserAgent)
-	if err := x.Gate.Wait(ctx); err != nil {
+	client, err := useClient(x.Client)
+	if err != nil {
 		return nil, err
 	}
-	resp, err := x.client().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

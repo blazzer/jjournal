@@ -2,9 +2,8 @@ package lj
 
 import (
 	"context"
-	"crypto/tls"
+	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,25 +22,11 @@ type ProbeConfig struct {
 	ScrapeURL      func(user string, skip int) (string, error)
 }
 
-func (cfg ProbeConfig) httpClient() *http.Client {
-	if cfg.Client != nil {
-		return cfg.Client
+func (cfg ProbeConfig) httpClient() (*http.Client, error) {
+	if cfg.Client == nil {
+		return nil, errors.New("lj: http client is required")
 	}
-	// Chrome reaches LiveJournal over IPv4. The default Go client can stall
-	// in an HTTP/2 handshake, which surfaces as a TLS timeout.
-	dialer := &net.Dialer{Timeout: 20 * time.Second}
-	return &http.Client{
-		Timeout: 45 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "tcp4", addr)
-			},
-			ForceAttemptHTTP2:   false,
-			TLSHandshakeTimeout: 20 * time.Second,
-			TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{},
-		},
-	}
+	return cfg.Client, nil
 }
 
 // RunProbe writes probe-out/report.txt. It returns process exit codes:
@@ -69,7 +54,10 @@ func RunProbe(ctx context.Context, cfg ProbeConfig) (int, error) {
 	pwMD5 := PasswordMD5(password)
 	redact := []string{password, pwMD5}
 
-	client := cfg.httpClient()
+	client, err := cfg.httpClient()
+	if err != nil {
+		return 1, err
+	}
 	xmlrpc := NewXMLRPC(client, cfg.XMLRPCEndpoint)
 	digest := NewDigest(client)
 	if cfg.DigestURL != nil {

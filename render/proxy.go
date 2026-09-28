@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,9 @@ type Proxy struct {
 	Dir          string
 	Client       *http.Client
 	AllowPrivate bool
+
+	mu   sync.Mutex
+	root *os.Root
 }
 
 // Sign returns /img?u= for a remote URL, or an error when the URL is not allowed.
@@ -93,8 +97,25 @@ func PublicIP(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
 		return false
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return false
+	}
+	// Unique local fc00::/7.
+	if ip16[0]&0xfe == 0xfc {
+		return false
+	}
+	// Documentation prefix 2001:db8::/32.
+	if ip16[0] == 0x20 && ip16[1] == 0x01 && ip16[2] == 0x0d && ip16[3] == 0xb8 {
+		return false
+	}
+	// NAT64 64:ff9b::/96. The embedded IPv4 must itself be public.
+	if ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b &&
+		ip16[4]|ip16[5]|ip16[6]|ip16[7]|ip16[8]|ip16[9]|ip16[10]|ip16[11] == 0 {
+		return PublicIP(net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15]))
 	}
 	if v4 := ip.To4(); v4 != nil {
 		switch {
@@ -119,12 +140,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	path, err := p.cache(r.Context(), raw)
+	f, mod, err := p.openCached(r.Context(), raw)
 	if err != nil {
 		http.Error(w, "unavailable", http.StatusBadGateway)
 		return
 	}
-	http.ServeFile(w, r, path)
+	defer f.Close()
+	http.ServeContent(w, r, "img", mod, f)
 }
 
 // Download caches raw and returns a site path under /userpics or /img is not used.
@@ -137,22 +159,90 @@ func (p *Proxy) Download(ctx context.Context, raw string) (string, error) {
 	return "/userpics/" + filepath.Base(path), nil
 }
 
-func (p *Proxy) cache(ctx context.Context, raw string) (string, error) {
+// Close releases the cache directory.
+func (p *Proxy) Close() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.root == nil {
+		return nil
+	}
+	err := p.root.Close()
+	p.root = nil
+	return err
+}
+
+func (p *Proxy) files() (*os.Root, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.root != nil {
+		return p.root, nil
+	}
+	if p.Dir == "" {
+		return nil, errors.New("render: no cache dir")
+	}
 	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(p.Dir)
+	if err != nil {
+		return nil, err
+	}
+	p.root = root
+	return root, nil
+}
+
+func (p *Proxy) openCached(ctx context.Context, raw string) (*os.File, time.Time, error) {
+	name, err := p.ensure(ctx, raw)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	root, err := p.files()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, time.Time{}, err
+	}
+	return f, st.ModTime(), nil
+}
+
+func (p *Proxy) cache(ctx context.Context, raw string) (string, error) {
+	name, err := p.ensure(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(p.Dir, name), nil
+}
+
+func (p *Proxy) ensure(ctx context.Context, raw string) (string, error) {
+	root, err := p.files()
+	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(raw))
 	name := fmt.Sprintf("%x", sum[:])
-	final := filepath.Join(p.Dir, name)
-	if st, err := os.Stat(final); err == nil && st.Size() > 0 {
-		return final, nil
+	if st, err := root.Stat(name); err == nil && st.Size() > 0 {
+		now := time.Now()
+		_ = root.Chtimes(name, now, now)
+		return name, nil
+	}
+	if p.Client == nil {
+		return "", errors.New("render: http client is required")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Journal/1.0")
-	resp, err := p.client().Do(req)
+	resp, err := p.Client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +250,7 @@ func (p *Proxy) cache(ctx context.Context, raw string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("render: image http %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -181,11 +271,28 @@ func (p *Proxy) cache(ctx context.Context, raw string) (string, error) {
 		os.Remove(tmpName)
 		return "", err
 	}
-	if err := os.Rename(tmpName, final); err != nil {
+	in, err := os.Open(tmpName)
+	if err != nil {
 		os.Remove(tmpName)
 		return "", err
 	}
-	return final, nil
+	out, err := root.Create(name)
+	if err != nil {
+		in.Close()
+		os.Remove(tmpName)
+		return "", err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		in.Close()
+		os.Remove(tmpName)
+		root.Remove(name)
+		return "", err
+	}
+	out.Close()
+	in.Close()
+	os.Remove(tmpName)
+	return name, nil
 }
 
 // CachedURL returns the local userpic path when raw is already on disk.
@@ -195,53 +302,15 @@ func (p *Proxy) CachedURL(raw string) (string, bool) {
 	}
 	sum := sha256.Sum256([]byte(raw))
 	name := fmt.Sprintf("%x", sum[:])
-	final := filepath.Join(p.Dir, name)
-	st, err := os.Stat(final)
+	root, err := p.files()
+	if err != nil {
+		return "", false
+	}
+	st, err := root.Stat(name)
 	if err != nil || st.Size() == 0 {
 		return "", false
 	}
 	return "/userpics/" + name, true
-}
-
-func (p *Proxy) client() *http.Client {
-	if p.Client != nil {
-		return p.Client
-	}
-	return &http.Client{
-		Timeout:       20 * time.Second,
-		CheckRedirect: p.checkRedirect,
-		Transport:     &http.Transport{DialContext: p.dial},
-	}
-}
-
-func (p *Proxy) checkRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 3 {
-		return errors.New("render: too many redirects")
-	}
-	return validateURL(req.URL.String(), p.AllowPrivate)
-}
-
-func (p *Proxy) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if !p.AllowPrivate && !PublicIP(ip) {
-			return nil, errors.New("render: refused private address")
-		}
-		return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	for _, ip := range ips {
-		if !p.AllowPrivate && !PublicIP(ip.IP) {
-			return nil, errors.New("render: refused private address")
-		}
-	}
-	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
 func imageMagic(b []byte) bool {

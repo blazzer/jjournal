@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -15,11 +16,16 @@ import (
 const (
 	XMLRPCEndpoint = "https://www.livejournal.com/interface/xmlrpc"
 	ClientVersion  = "Journal/1.0"
-	// Browser-like, so LiveJournal does not treat the client as a bot.
-	UserAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 	ItemShow       = 50
 	MaxScrapePages = 5
 )
+
+func useClient(c *http.Client) (*http.Client, error) {
+	if c == nil {
+		return nil, errors.New("lj: http client is required")
+	}
+	return c, nil
+}
 
 // LJSource is the read-only LiveJournal bridge.
 type LJSource interface {

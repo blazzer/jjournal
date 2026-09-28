@@ -22,19 +22,11 @@ import (
 type Digest struct {
 	Client *http.Client
 	URLFor func(user string) (string, error)
-	Gate   *Gate
 }
 
 // NewDigest returns a digest source. A nil URLFor uses the live LiveJournal URL.
 func NewDigest(client *http.Client) *Digest {
 	return &Digest{Client: client, URLFor: DefaultDigestURL}
-}
-
-func (d *Digest) client() *http.Client {
-	if d.Client != nil {
-		return d.Client
-	}
-	return &http.Client{Timeout: 30 * time.Second}
 }
 
 func (d *Digest) feedURL(user string) (string, error) {
@@ -88,11 +80,11 @@ func (d *Digest) Fetch(ctx context.Context, user, secret string, authenticate bo
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("User-Agent", UserAgent)
-	if err := d.Gate.Wait(ctx); err != nil {
+	client, err := useClient(d.Client)
+	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := d.client().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -157,12 +149,8 @@ func (d *Digest) Fetch(ctx context.Context, user, secret string, authenticate bo
 	if err != nil {
 		return nil, 0, err
 	}
-	req2.Header.Set("User-Agent", UserAgent)
 	req2.Header.Set("Authorization", auth)
-	if err := d.Gate.Wait(ctx); err != nil {
-		return nil, 0, err
-	}
-	resp2, err := d.client().Do(req2)
+	resp2, err := client.Do(req2)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -35,11 +35,33 @@ func TestSchedule(t *testing.T) {
 	if JitteredInterval(20*time.Minute, 5*time.Minute, 1) != 25*time.Minute {
 		t.Fatal("high")
 	}
-	if Backoff(1) != 30*time.Second || Backoff(2) != time.Minute || Backoff(3) != 2*time.Minute {
-		t.Fatal(Backoff(1), Backoff(2), Backoff(3))
+	for i := 0; i < 200; i++ {
+		d := JitteredInterval(20*time.Minute, 5*time.Minute, Unit())
+		if d < 15*time.Minute || d > 25*time.Minute {
+			t.Fatal(d)
+		}
 	}
-	if Backoff(20) != 20*time.Minute {
-		t.Fatal(Backoff(20))
+	interval := 20 * time.Minute
+	var prev time.Duration
+	for n := 1; n <= 12; n++ {
+		base := BackoffBase(interval, n)
+		if base < interval {
+			t.Fatalf("n=%d base %s", n, base)
+		}
+		if n > 1 && base < prev {
+			t.Fatalf("n=%d decreased", n)
+		}
+		prev = base
+		low := Backoff(interval, n, 0)
+		if low < interval-interval/5 {
+			t.Fatalf("n=%d jitter %s", n, low)
+		}
+	}
+	if BackoffBase(interval, 1) != interval {
+		t.Fatal(BackoffBase(interval, 1))
+	}
+	if BackoffBase(interval, 20) != 6*time.Hour {
+		t.Fatal(BackoffBase(interval, 20))
 	}
 }
 
@@ -314,5 +336,40 @@ func TestRunCancels(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("run did not stop")
+	}
+	if err := w.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type stubPause struct{ until time.Time }
+
+func (s stubPause) PausedUntil(string) (time.Time, bool)    { return s.until, true }
+func (s stubPause) PauseHost(string, time.Duration, string) {}
+
+func TestPausedHostSkipsRequest(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	pw := strings.Repeat("ab", 16)
+	ada, err := st.UpsertLogin(ctx, "ada", "Ada", pw, "cookie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &lj.Fake{Entries: map[string][]lj.LJEntry{"ada": {{
+		ItemID: 1, Journal: "bob", Author: "bob", EventTime: time.Date(2024, 6, 1, 11, 0, 0, 0, time.UTC),
+	}}}}
+	when := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	w := New(st, fake, nil, 1)
+	w.SetClock(func() time.Time { return when }, func() float64 { return 0 })
+	w.Pauses = stubPause{until: when.Add(2 * time.Hour)}
+	if err := w.SyncUser(ctx, ada.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fake.PageCalls != 0 || fake.FriendCalls != 0 {
+		t.Fatalf("pages %d friends %d", fake.PageCalls, fake.FriendCalls)
+	}
+	u, err := st.UserByID(ctx, ada.ID)
+	if err != nil || !u.NextSyncAt.Equal(when.Add(2*time.Hour)) {
+		t.Fatal(u.NextSyncAt, err)
 	}
 }

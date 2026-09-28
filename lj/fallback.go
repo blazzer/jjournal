@@ -23,16 +23,11 @@ func NewSource(kind string, client *http.Client) (*Fallback, error) {
 		return nil, fmt.Errorf("lj: unknown LJ_SOURCE %q", kind)
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		return nil, errors.New("lj: http client is required")
 	}
-	gate := NewGate(RequestGap)
 	xml := NewXMLRPC(client, XMLRPCEndpoint)
-	xml.Gate = gate
 	digest := NewDigest(client)
-	digest.Gate = gate
 	scrape := NewScrape(client, XMLRPCEndpoint)
-	scrape.Gate = gate
-	scrape.XML.Gate = gate
 	f := &Fallback{names: order}
 	for _, name := range order {
 		switch name {

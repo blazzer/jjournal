@@ -118,6 +118,7 @@ func TestProxySignAndCache(t *testing.T) {
 	key := make([]byte, 32)
 	key[0] = 7
 	p := &Proxy{Key: key, Dir: t.TempDir(), AllowPrivate: true, Client: srv.Client()}
+	t.Cleanup(func() { p.Close() })
 	if _, err := p.Sign("http://127.0.0.1/x.png"); err == nil {
 		// AllowPrivate permits signing loopback.
 	}

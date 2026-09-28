@@ -4,6 +4,7 @@ package sync
 import (
 	"context"
 	"log"
+	"regexp"
 	gosync "sync"
 	"time"
 
@@ -23,13 +24,24 @@ type Worker struct {
 	FriendEvery time.Duration
 	Poll        time.Duration
 	MaxPages    int
+	APIHost     string
+	Pauses      Pauser
+	Images      chan<- string
 	sem         chan struct{}
 	kick        chan int64
 	mu          gosync.Mutex
 	running     map[int64]bool
+	stopped     bool
+	wg          gosync.WaitGroup
 	now         func() time.Time
 	randFloat   func() float64
 	log         *log.Logger
+}
+
+// Pauser is the outbound host-pause view.
+type Pauser interface {
+	PausedUntil(host string) (time.Time, bool)
+	PauseHost(host string, d time.Duration, reason string)
 }
 
 // New builds a worker. maxConcurrent defaults to 2.
@@ -50,9 +62,28 @@ func New(st *store.Store, src lj.LJSource, proxy *render.Proxy, maxConcurrent in
 		sem:         make(chan struct{}, maxConcurrent),
 		kick:        make(chan int64, 32),
 		running:     map[int64]bool{},
+		APIHost:     "www.livejournal.com",
 		now:         time.Now,
-		randFloat:   func() float64 { return 0.5 },
+		randFloat:   Unit,
 		log:         log.Default(),
+	}
+}
+
+// Stop waits for syncs spawned by Run.
+func (w *Worker) Stop(ctx context.Context) error {
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -107,13 +138,15 @@ func (w *Worker) enqueue(ctx context.Context) {
 
 func (w *Worker) spawn(ctx context.Context, id int64) {
 	w.mu.Lock()
-	if w.running[id] {
+	if w.stopped || w.running[id] {
 		w.mu.Unlock()
 		return
 	}
 	w.running[id] = true
+	w.wg.Add(1)
 	w.mu.Unlock()
 	go func() {
+		defer w.wg.Done()
 		defer func() {
 			w.mu.Lock()
 			delete(w.running, id)
@@ -147,6 +180,12 @@ func (w *Worker) SyncUser(ctx context.Context, userID int64) error {
 	if u.BlockedUntil.After(now) {
 		return nil
 	}
+	if w.APIHost != "" && w.Pauses != nil {
+		if until, ok := w.Pauses.PausedUntil(w.APIHost); ok && until.After(now) {
+			extra := time.Duration(float64(w.Jitter) * w.randFloat())
+			return w.Store.SetNextSync(ctx, userID, until.Add(extra))
+		}
+	}
 	pw, cookie, err := w.Store.Secrets(ctx, userID)
 	if err != nil {
 		return err
@@ -166,6 +205,7 @@ func (w *Worker) SyncUser(ctx context.Context, userID int64) error {
 			if lj.IsAuth(err) || lj.IsBlocked(err) {
 				return w.finish(ctx, u, pw, cookie, err, now)
 			}
+			w.log.Printf("sync friends %d: %s", u.ID, lj.SafeMessage(err))
 		}
 	}
 	nextSkip, err := w.syncPages(ctx, &sess, u, pw, now)
@@ -331,12 +371,36 @@ func (w *Worker) save(ctx context.Context, viewerID int64, e lj.LJEntry) error {
 	if err != nil {
 		return err
 	}
-	if w.Proxy != nil && e.UserpicURL != "" {
-		if _, err := w.Proxy.Download(ctx, e.UserpicURL); err != nil {
-			w.log.Printf("userpic: %s", lj.SafeMessage(err))
-		}
+	if e.UserpicURL != "" {
+		w.enqueueImage(e.UserpicURL)
+	}
+	for _, raw := range htmlImageURLs(body) {
+		w.enqueueImage(raw)
 	}
 	return nil
+}
+
+var htmlSrc = regexp.MustCompile(`(?i)\bsrc\s*=\s*"([^"]+)"`)
+
+func htmlImageURLs(body string) []string {
+	var out []string
+	for _, m := range htmlSrc.FindAllStringSubmatch(body, -1) {
+		u := m[1]
+		if len(u) > 8 && (u[:7] == "http://" || u[:8] == "https://") {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func (w *Worker) enqueueImage(raw string) {
+	if w == nil || w.Images == nil || raw == "" {
+		return
+	}
+	select {
+	case w.Images <- raw:
+	default:
+	}
 }
 
 func (w *Worker) finish(ctx context.Context, u store.User, pw, cookie string, err error, now time.Time) error {
@@ -345,8 +409,11 @@ func (w *Worker) finish(ctx context.Context, u store.User, pw, cookie string, er
 	case lj.IsAuth(err):
 		return w.Store.MarkAuthFailed(ctx, u.ID, msg)
 	case lj.IsBlocked(err):
+		if w.Pauses != nil && w.APIHost != "" {
+			w.Pauses.PauseHost(w.APIHost, w.BlockFor, "blocked")
+		}
 		return w.Store.MarkBlocked(ctx, u.ID, msg, now.Add(w.BlockFor))
 	default:
-		return w.Store.MarkSyncError(ctx, u.ID, msg, u.FailCount+1, now.Add(Backoff(u.FailCount+1)))
+		return w.Store.MarkSyncError(ctx, u.ID, msg, u.FailCount+1, now.Add(Backoff(w.Interval, u.FailCount+1, w.randFloat())))
 	}
 }

@@ -229,19 +229,8 @@ func TestCaptchaDetection(t *testing.T) {
 	}
 }
 
-func TestGateAndPagingLimit(t *testing.T) {
-	g := NewGate(30 * time.Millisecond)
-	start := time.Now()
+func TestPagingLimit(t *testing.T) {
 	ctx := context.Background()
-	if err := g.Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(start) < 30*time.Millisecond {
-		t.Fatal("gate did not space calls")
-	}
 	err := classifyFault(&FaultError{Code: 209, Message: "bad skip"})
 	if !IsLimit(err) {
 		t.Fatal(err)

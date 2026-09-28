@@ -19,7 +19,6 @@ type Scrape struct {
 	Client *http.Client
 	URLFor func(user string, skip int) (string, error)
 	XML    *XMLRPC
-	Gate   *Gate
 }
 
 // NewScrape returns an HTML friends-page source. Login uses XML-RPC sessiongenerate.
@@ -29,13 +28,6 @@ func NewScrape(client *http.Client, xmlEndpoint string) *Scrape {
 		URLFor: DefaultScrapeURL,
 		XML:    NewXMLRPC(client, xmlEndpoint),
 	}
-}
-
-func (sc *Scrape) client() *http.Client {
-	if sc.Client != nil {
-		return sc.Client
-	}
-	return &http.Client{Timeout: 30 * time.Second}
 }
 
 func (sc *Scrape) pageURL(user string, skip int) (string, error) {
@@ -115,12 +107,12 @@ func (sc *Scrape) fetch(ctx context.Context, s Session, skip int) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", UserAgent)
 	req.AddCookie(&http.Cookie{Name: "ljsession", Value: s.Cookie})
-	if err := sc.Gate.Wait(ctx); err != nil {
+	client, err := useClient(sc.Client)
+	if err != nil {
 		return nil, err
 	}
-	resp, err := sc.client().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

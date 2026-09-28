@@ -7,12 +7,15 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
-	jsync "journal/sync"
 	"journal/lj"
+	"journal/outbound"
 	"journal/render"
 	"journal/store"
+	jsync "journal/sync"
 )
 
 //go:embed templates/*.html static/*
@@ -59,13 +62,37 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer st.Close()
-	src, err := lj.NewSource(cfg.LJSource, nil)
+	contact := os.Getenv("OPERATOR_CONTACT")
+	if contact == "" {
+		contact = "unset"
+	}
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	picDir, imgDir := cfg.UserpicDir, cfg.ImageDir
+	if os.Getenv("USERPIC_DIR") == "" {
+		picDir = filepath.Join(dataDir, "cache", "userpics")
+	}
+	if os.Getenv("IMAGE_CACHE_DIR") == "" {
+		imgDir = filepath.Join(dataDir, "cache", "images")
+	}
+	oc := outbound.New(outbound.Config{Contact: contact, Pauses: storePauses{st}})
+	if err := oc.Load(ctx); err != nil {
+		return err
+	}
+	src, err := lj.NewSource(cfg.LJSource, oc.HTTP(outbound.LaneAPI))
 	if err != nil {
 		return err
 	}
-	pics := &render.Proxy{Key: cfg.Secret, Dir: cfg.UserpicDir}
-	images := &render.Proxy{Key: cfg.Secret, Dir: cfg.ImageDir}
+	pics := &render.Proxy{Key: cfg.Secret, Dir: picDir, Client: oc.HTTP(outbound.LaneImage)}
+	images := &render.Proxy{Key: cfg.Secret, Dir: imgDir, Client: oc.HTTP(outbound.LaneImage)}
+	jobs := make(chan string, 500)
 	worker := jsync.New(st, src, pics, 2)
+	worker.Pauses = oc
+	worker.Images = jobs
+	go fetchImages(ctx, jobs, pics, images)
+	go cacheJanitor(ctx, []string{picDir, imgDir})
 	go worker.Run(ctx)
 	h, err := New(cfg, st, src, worker, pics, images)
 	if err != nil {

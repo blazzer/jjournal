@@ -1,6 +1,9 @@
 package sync
 
-import "time"
+import (
+	"math/rand/v2"
+	"time"
+)
 
 const (
 	DefaultInterval    = 20 * time.Minute
@@ -26,17 +29,42 @@ func JitteredInterval(interval, jitter time.Duration, unit float64) time.Duratio
 	return interval - jitter + time.Duration(float64(2*jitter)*unit)
 }
 
-// Backoff is the delay after failCount consecutive errors, capped at 20 minutes.
-func Backoff(failCount int) time.Duration {
-	if failCount < 1 {
-		failCount = 1
+const maxBackoff = 6 * time.Hour
+
+// BackoffBase is the delay before jitter: min(interval * 2^(n-1), 6h).
+// n of 1 equals interval.
+func BackoffBase(interval time.Duration, n int) time.Duration {
+	if n < 1 {
+		n = 1
 	}
-	if failCount > 10 {
-		return 20 * time.Minute
+	d := interval
+	for i := 1; i < n; i++ {
+		if d >= maxBackoff/2 {
+			return maxBackoff
+		}
+		d *= 2
+		if d > maxBackoff || d <= 0 {
+			return maxBackoff
+		}
 	}
-	d := 30 * time.Second * time.Duration(uint(1)<<uint(failCount-1))
-	if d > 20*time.Minute || d <= 0 {
-		return 20 * time.Minute
+	if d > maxBackoff {
+		return maxBackoff
 	}
 	return d
 }
+
+// Backoff applies ±20% jitter. unit 0 is -20% and unit 1 is +20%.
+func Backoff(interval time.Duration, n int, unit float64) time.Duration {
+	if unit < 0 {
+		unit = 0
+	}
+	if unit > 1 {
+		unit = 1
+	}
+	base := BackoffBase(interval, n)
+	scale := 0.8 + 0.4*unit
+	return time.Duration(float64(base) * scale)
+}
+
+// Unit returns a production jitter sample in [0, 1].
+func Unit() float64 { return rand.Float64() }
