@@ -494,7 +494,7 @@ func TestScrapeSkipAndBlocked(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		skips = append(skips, r.URL.RawQuery)
 		if r.Header.Get("Cookie") == "" {
-			http.Error(w, "no cookie", 401)
+			http.Error(w, "no cookie", http.StatusUnauthorized)
 			return
 		}
 		if strings.Contains(r.URL.RawQuery, "skip=20") {
@@ -562,11 +562,8 @@ func TestFallbackUsesNextSource(t *testing.T) {
 		t.Fatalf("%v %+v", err, entries)
 	}
 	friends, err := f.FriendList(context.Background(), sess)
-	if err != nil || friends != nil && len(friends) != 0 {
-		// second fake has no friends; unsupported then empty success
-	}
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(friends) != 0 {
+		t.Fatalf("%v %+v", err, friends)
 	}
 }
 
@@ -643,7 +640,7 @@ func TestProbeSkipAndSuccess(t *testing.T) {
 			w.Write(page)
 			return
 		}
-		http.Error(w, "no cookie", 401)
+		http.Error(w, "no cookie", http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 	out := t.TempDir()

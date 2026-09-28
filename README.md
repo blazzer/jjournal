@@ -40,6 +40,7 @@ Copy `.env.example` to `.env` and set at least these:
 | `BASE_URL` | public `https://` origin |
 | `SITE_ADDRESS` | DNS name Caddy uses for TLS |
 | `OPERATOR_CONTACT` | your email or URL, sent in the User-Agent to the services this site reads |
+| `SITE_NAME` | name shown in the header (default `Journal`) |
 
 Everything else has a default; the full list is in [SPEC.md §13.1](SPEC.md#131-configuration).
 
