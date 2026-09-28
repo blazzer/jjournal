@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"journal/keys"
 	"strings"
 	"sync"
 	"time"
@@ -39,30 +42,56 @@ func (p *Proxy) Sign(raw string) (string, error) {
 	if err := validateURL(raw, p.AllowPrivate); err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, p.Key)
-	mac.Write([]byte(raw))
-	token := base64.RawURLEncoding.EncodeToString([]byte(raw)) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	root, err := keys.NewRoot(p.Key)
+	if err != nil {
+		return "", err
+	}
+	sig, err := keys.SignImage(root, raw)
+	if err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(root.ID[:]) + "." + base64.RawURLEncoding.EncodeToString([]byte(raw)) + "." + sig
 	return "/img?u=" + token, nil
 }
 
 // Open verifies a signed token and returns the raw URL.
 func (p *Proxy) Open(token string) (string, error) {
-	raw, sig, ok := strings.Cut(token, ".")
-	if !ok || raw == "" || sig == "" {
+	parts := strings.Split(token, ".")
+	var urlBytes []byte
+	var err error
+	switch len(parts) {
+	case 3:
+		root, err := keys.NewRoot(p.Key)
+		if err != nil {
+			return "", err
+		}
+		if hex.EncodeToString(root.ID[:]) != parts[0] {
+			return "", errors.New("render: bad image signature")
+		}
+		urlBytes, err = base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return "", err
+		}
+		want, err := keys.SignImage(root, string(urlBytes))
+		if err != nil || !hmac.Equal([]byte(want), []byte(parts[2])) {
+			return "", errors.New("render: bad image signature")
+		}
+	case 2:
+		urlBytes, err = base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil {
+			return "", err
+		}
+		got, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return "", err
+		}
+		mac := hmac.New(sha256.New, p.Key)
+		mac.Write(urlBytes)
+		if !hmac.Equal(got, mac.Sum(nil)) {
+			return "", errors.New("render: bad image signature")
+		}
+	default:
 		return "", errors.New("render: bad image token")
-	}
-	urlBytes, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return "", err
-	}
-	got, err := base64.RawURLEncoding.DecodeString(sig)
-	if err != nil {
-		return "", err
-	}
-	mac := hmac.New(sha256.New, p.Key)
-	mac.Write(urlBytes)
-	if !hmac.Equal(got, mac.Sum(nil)) {
-		return "", errors.New("render: bad image signature")
 	}
 	u := string(urlBytes)
 	if err := validateURL(u, p.AllowPrivate); err != nil {

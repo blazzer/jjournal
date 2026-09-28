@@ -44,8 +44,7 @@ func run(args []string) int {
 	case "restore":
 		return cmdRestore(args)
 	case "rotate-keys":
-		fmt.Fprintln(os.Stderr, "not available")
-		return 1
+		return cmdRotate(args)
 	case "demo":
 		fmt.Fprintln(os.Stderr, "not available")
 		return 1
@@ -230,6 +229,34 @@ func cmdBackup(args []string) int {
 		return 1
 	}
 	fmt.Println(path)
+	return 0
+}
+
+func cmdRotate(args []string) int {
+	fs := flag.NewFlagSet("rotate-keys", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := loadConfig(false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	st, err := store.OpenWithDataDir(cfg.DBPath, cfg.Secret, cfg.DataDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer st.Close()
+	if len(cfg.SecretPrevious) == 32 {
+		st.SetPrevious(cfg.SecretPrevious)
+	}
+	if err := st.RotateSecrets(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println("rotated")
 	return 0
 }
 

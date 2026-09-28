@@ -33,10 +33,11 @@ var migrationFS embed.FS
 
 // Store is the SQLite database.
 type Store struct {
-	db      *sql.DB
-	key     []byte
-	path    string
-	dataDir string
+	db       *sql.DB
+	key      []byte
+	previous []byte
+	path     string
+	dataDir  string
 }
 
 // User is a local account. The first user (id 1) is the admin.
@@ -206,16 +207,13 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 	if err != nil {
 		return User{}, err
 	}
-	pwEnc, err := Seal(s.key, []byte(pwMD5))
+	pwEnc, err := s.sealSecret(pwMD5, "journal/v1/legacy-secret")
 	if err != nil {
 		return User{}, err
 	}
-	var cookieEnc []byte
-	if cookie != "" {
-		cookieEnc, err = Seal(s.key, []byte(cookie))
-		if err != nil {
-			return User{}, err
-		}
+	cookieEnc, err := s.sealSecret(cookie, "journal/v1/token")
+	if err != nil {
+		return User{}, err
 	}
 	now := time.Now().UTC()
 	existing, err := s.UserByUsername(ctx, username)
@@ -234,10 +232,14 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 		if err != nil {
 			return User{}, err
 		}
+		root, err := s.roots()
+		if err != nil {
+			return User{}, err
+		}
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO accounts(
-			user_id, service, username, secret_scheme, password_enc, session_enc, sync_status, next_sync_at)
-			VALUES (?, 'livejournal', ?, 'legacy', ?, ?, 'ok', ?)`,
-			id, username, pwEnc, nullBytes(cookieEnc), FormatTime(now)); err != nil {
+			user_id, service, username, secret_scheme, key_id, password_enc, session_enc, sync_status, next_sync_at)
+			VALUES (?, 'livejournal', ?, 'envelope', ?, ?, ?, 'ok', ?)`,
+			id, username, root[0].ID[:], pwEnc, nullBytes(cookieEnc), FormatTime(now)); err != nil {
 			return User{}, err
 		}
 		if err := s.ensureDefaultGroup(ctx, id); err != nil {
@@ -255,10 +257,14 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 	if _, err = s.db.ExecContext(ctx, `UPDATE users SET display_name=? WHERE id=?`, display, existing.ID); err != nil {
 		return User{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=?,
+	root, err := s.roots()
+	if err != nil {
+		return User{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=?, secret_scheme='envelope', key_id=?,
 		sync_status='ok', sync_error='', sync_fail_count=0, blocked_until=NULL, next_sync_at=?
 		WHERE user_id=? AND service='livejournal'`,
-		pwEnc, nullBytes(cookieEnc), FormatTime(now), existing.ID)
+		pwEnc, nullBytes(cookieEnc), root[0].ID[:], FormatTime(now), existing.ID)
 	if err != nil {
 		return User{}, err
 	}
@@ -348,37 +354,32 @@ func (s *Store) Secrets(ctx context.Context, userID int64) (pwMD5, cookie string
 	if err != nil {
 		return "", "", err
 	}
-	if len(pw) > 0 {
-		b, err := Unseal(s.key, pw)
-		if err != nil {
-			return "", "", err
-		}
-		pwMD5 = string(b)
+	pwMD5, err = s.openSecret(pw, "journal/v1/legacy-secret")
+	if err != nil {
+		return "", "", err
 	}
-	if len(sess) > 0 {
-		b, err := Unseal(s.key, sess)
-		if err != nil {
-			return "", "", err
-		}
-		cookie = string(b)
+	cookie, err = s.openSecret(sess, "journal/v1/token")
+	if err != nil {
+		return "", "", err
 	}
 	return pwMD5, cookie, nil
 }
 
 // SaveSecrets replaces the encrypted LJ secret material.
 func (s *Store) SaveSecrets(ctx context.Context, userID int64, pwMD5, cookie string) error {
-	pwEnc, err := Seal(s.key, []byte(pwMD5))
+	pwEnc, err := s.sealSecret(pwMD5, "journal/v1/legacy-secret")
 	if err != nil {
 		return err
 	}
-	var cookieEnc []byte
-	if cookie != "" {
-		cookieEnc, err = Seal(s.key, []byte(cookie))
-		if err != nil {
-			return err
-		}
+	cookieEnc, err := s.sealSecret(cookie, "journal/v1/token")
+	if err != nil {
+		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=? WHERE user_id=? AND service='livejournal'`, pwEnc, nullBytes(cookieEnc), userID)
+	root, err := s.roots()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET password_enc=?, session_enc=?, secret_scheme='envelope', key_id=? WHERE user_id=? AND service='livejournal'`, pwEnc, nullBytes(cookieEnc), root[0].ID[:], userID)
 	return err
 }
 

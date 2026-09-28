@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -10,6 +11,36 @@ import (
 
 	"journal/lj"
 )
+
+func TestRotateSecrets(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/t.db"
+	oldKey := bytes.Repeat([]byte{3}, 32)
+	newKey := bytes.Repeat([]byte{4}, 32)
+	s, err := Open(path, oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw := strings.Repeat("ab", 16)
+	if _, err := s.UpsertLogin(t.Context(), "ada", "Ada", pw, "cookie-1"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path, newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetPrevious(oldKey)
+	if err := s.RotateSecrets(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s.SetPrevious(nil)
+	got, cookie, err := s.Secrets(t.Context(), 1)
+	if err != nil || got != pw || cookie != "cookie-1" {
+		t.Fatalf("%q %q %v", got, cookie, err)
+	}
+}
 
 func testKey() []byte {
 	b := make([]byte, 32)

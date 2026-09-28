@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"journal/keys"
 	"journal/store"
 )
 
@@ -31,9 +32,13 @@ func (s *Server) secure(r *http.Request) bool {
 
 // WriteSession sets the signed session cookie.
 func (s *Server) WriteSession(w http.ResponseWriter, r *http.Request, id string) {
+	value, err := signSession(s.Config.Secret, id)
+	if err != nil {
+		value = id + "." + store.Sign(s.Config.Secret, id)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookie,
-		Value:    id + "." + store.Sign(s.Config.Secret, id),
+		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.secure(r),
@@ -56,8 +61,8 @@ func (s *Server) CurrentUser(r *http.Request) (store.User, bool) {
 	if err != nil {
 		return store.User{}, false
 	}
-	id, sig, ok := strings.Cut(c.Value, ".")
-	if !ok || !store.Verify(s.Config.Secret, id, sig) {
+	id, ok := sessionID(s.Config.Secret, s.Config.SecretPrevious, c.Value)
+	if !ok {
 		return store.User{}, false
 	}
 	sess, err := s.Store.LookupSession(r.Context(), id)
@@ -99,4 +104,50 @@ func (s *Server) CheckCSRF(r *http.Request) bool {
 		return false
 	}
 	return hmac.Equal([]byte(form), []byte(c.Value))
+}
+
+func signSession(secret []byte, id string) (string, error) {
+	root, err := keys.NewRoot(secret)
+	if err != nil {
+		return "", err
+	}
+	kid, sig, err := keys.SignCookie(root, id)
+	if err != nil {
+		return "", err
+	}
+	return id + "." + kid + "." + sig, nil
+}
+
+func sessionID(current, previous []byte, cookie string) (string, bool) {
+	parts := strings.Split(cookie, ".")
+	switch len(parts) {
+	case 2:
+		if store.Verify(current, parts[0], parts[1]) || (len(previous) == 32 && store.Verify(previous, parts[0], parts[1])) {
+			return parts[0], true
+		}
+	case 3:
+		for _, key := range [][]byte{current, previous} {
+			if len(key) != 32 {
+				continue
+			}
+			root, err := keys.NewRoot(key)
+			if err != nil {
+				continue
+			}
+			if hexID(root.ID[:]) == parts[1] && keys.VerifyCookie(root, parts[0], parts[2]) {
+				return parts[0], true
+			}
+		}
+	}
+	return "", false
+}
+
+func hexID(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = digits[v>>4]
+		out[i*2+1] = digits[v&0x0f]
+	}
+	return string(out)
 }
