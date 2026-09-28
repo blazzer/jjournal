@@ -3,7 +3,7 @@ package sync
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"regexp"
 	gosync "sync"
 	"time"
@@ -35,7 +35,7 @@ type Worker struct {
 	wg          gosync.WaitGroup
 	now         func() time.Time
 	randFloat   func() float64
-	log         *log.Logger
+	log         *slog.Logger
 }
 
 // Pauser is the outbound host-pause view.
@@ -65,7 +65,7 @@ func New(st *store.Store, src lj.LJSource, proxy *render.Proxy, maxConcurrent in
 		APIHost:     "www.livejournal.com",
 		now:         time.Now,
 		randFloat:   Unit,
-		log:         log.Default(),
+		log:         slog.Default(),
 	}
 }
 
@@ -128,7 +128,7 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) enqueue(ctx context.Context) {
 	ids, err := w.Store.UsersDue(ctx, w.now())
 	if err != nil {
-		w.log.Printf("sync list: %s", lj.SafeMessage(err))
+		w.log.Error("sync list", "err", lj.SafeMessage(err))
 		return
 	}
 	for _, id := range ids {
@@ -153,7 +153,7 @@ func (w *Worker) spawn(ctx context.Context, id int64) {
 			w.mu.Unlock()
 		}()
 		if err := w.SyncUser(ctx, id); err != nil {
-			w.log.Printf("sync user %d: %s", id, lj.SafeMessage(err))
+			w.log.Error("sync user", "user", id, "err", lj.SafeMessage(err))
 		}
 	}()
 }
@@ -205,7 +205,7 @@ func (w *Worker) SyncUser(ctx context.Context, userID int64) error {
 			if lj.IsAuth(err) || lj.IsBlocked(err) {
 				return w.finish(ctx, u, pw, cookie, err, now)
 			}
-			w.log.Printf("sync friends %d: %s", u.ID, lj.SafeMessage(err))
+			w.log.Error("sync friends", "user", u.ID, "err", lj.SafeMessage(err))
 		}
 	}
 	nextSkip, err := w.syncPages(ctx, &sess, u, pw, now)

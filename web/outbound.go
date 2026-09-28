@@ -2,8 +2,6 @@ package web
 
 import (
 	"context"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +19,8 @@ func (p storePauses) Put(ctx context.Context, host string, until time.Time, reas
 	return p.s.PutHostPause(ctx, host, until, reason)
 }
 
-func fetchImages(ctx context.Context, jobs <-chan string, pics, images *render.Proxy) {
+// FetchImages downloads queued image URLs on the image lane.
+func FetchImages(ctx context.Context, jobs <-chan string, pics, images *render.Proxy) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -36,12 +35,10 @@ func fetchImages(ctx context.Context, jobs <-chan string, pics, images *render.P
 	}
 }
 
-func cacheJanitor(ctx context.Context, dirs []string) {
-	maxBytes := int64(256) << 20
-	if v := os.Getenv("CACHE_MAX_MB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxBytes = int64(n) << 20
-		}
+// CacheJanitor evicts cache files until the total is under maxBytes.
+func CacheJanitor(ctx context.Context, dirs []string, maxBytes int64) {
+	if maxBytes <= 0 {
+		maxBytes = 256 << 20
 	}
 	t := time.NewTicker(10 * time.Minute)
 	defer t.Stop()

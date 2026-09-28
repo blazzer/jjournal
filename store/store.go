@@ -109,6 +109,25 @@ func sqliteReadOnlyDSN(path string) string {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
+// Ready reports whether the database answers and every migration is applied.
+func (s *Store) Ready(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return err
+	}
+	names, err := migrationNames()
+	if err != nil {
+		return err
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
+		return err
+	}
+	if n != len(names) {
+		return fmt.Errorf("store: migrations %d of %d", n, len(names))
+	}
+	return nil
+}
+
 // NormalizeSkip clamps a paging offset.
 func NormalizeSkip(skip int) int {
 	if skip < 0 {
