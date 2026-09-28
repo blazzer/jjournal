@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	colorRe = regexp.MustCompile(`^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,20}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$`)
-	alignRe = regexp.MustCompile(`^(?:left|right|center|justify)$`)
+	colorRe  = regexp.MustCompile(`^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,20}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$`)
+	alignRe  = regexp.MustCompile(`^(?:left|right|center|justify)$`)
 	weightRe = regexp.MustCompile(`^(?:normal|bold|bolder|lighter|[1-9]00)$`)
 	styleRe  = regexp.MustCompile(`^(?:normal|italic|oblique)$`)
 	decoRe   = regexp.MustCompile(`^(?:none|underline|overline|line-through)$`)
@@ -26,6 +26,7 @@ func Policy() *bluemonday.Policy {
 		"hr", "i", "img", "li", "ol", "p", "pre", "q", "s", "small", "span", "strike", "strong",
 		"sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "ul", "abbr",
 		"cite", "del", "ins", "center", "font", "big", "lj", "lj-cut", "iframe",
+		"details", "summary",
 	)
 	p.SkipElementsContent("script", "style", "noscript", "object", "embed", "form", "textarea", "select", "button", "input", "meta", "link", "base")
 	p.AllowAttrs("href").Matching(hrefRe).OnElements("a")
@@ -40,6 +41,7 @@ func Policy() *bluemonday.Policy {
 	p.AllowAttrs("title", "allow", "allowfullscreen", "frameborder").OnElements("iframe")
 	p.AllowAttrs("user", "site", "comm").Matching(regexp.MustCompile(`^[A-Za-z0-9_-]{1,25}$`)).OnElements("lj")
 	p.AllowAttrs("text").OnElements("lj-cut")
+	p.AllowAttrs("class").Matching(regexp.MustCompile(`^cut$`)).OnElements("details", "summary")
 	p.AllowNoAttrs().OnElements("lj", "lj-cut")
 	p.AllowAttrs("color", "face").OnElements("font")
 	p.AllowAttrs("size").Matching(numRe).OnElements("font")

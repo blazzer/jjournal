@@ -25,12 +25,12 @@ func TestHostileHTML(t *testing.T) {
 			return ""
 		},
 	})
-	for _, bad := range []string{"<script", "onclick", "javascript:", "evil.example", "position", "secret cut text"} {
+	for _, bad := range []string{"<script", "onclick", "javascript:", "evil.example", "position"} {
 		if strings.Contains(strings.ToLower(out), strings.ToLower(bad)) {
 			t.Fatalf("output contains %q:\n%s", bad, out)
 		}
 	}
-	for _, good := range []string{"hello", "youtube.com/embed/abc123", "player.vimeo.com/video/99", "Read more", "/~alice/profile", "/static/userhead.svg", "/img?u=signed", "overlay"} {
+	for _, good := range []string{"hello", "youtube.com/embed/abc123", "player.vimeo.com/video/99", "Read more", "secret cut text", `<details class="cut">`, "/~alice/profile", "/static/userhead.svg", "/img?u=signed", "overlay"} {
 		if !strings.Contains(out, good) {
 			t.Fatalf("missing %q in %s", good, out)
 		}

@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -28,7 +29,7 @@ func RenderBody(raw string, opt Options) string {
 	for _, n := range nodes {
 		root.AppendChild(n)
 	}
-	transform(root, opt)
+	transform(root, opt, false)
 	var buf bytes.Buffer
 	for c := root.FirstChild; c != nil; c = c.NextSibling {
 		_ = html.Render(&buf, c)
@@ -36,7 +37,7 @@ func RenderBody(raw string, opt Options) string {
 	return buf.String()
 }
 
-func transform(n *html.Node, opt Options) {
+func transform(n *html.Node, opt Options, inCut bool) {
 	for c := n.FirstChild; c != nil; {
 		next := c.NextSibling
 		if c.Type == html.ElementNode {
@@ -47,23 +48,27 @@ func transform(n *html.Node, opt Options) {
 				n.RemoveChild(c)
 			case "lj-cut":
 				if opt.Full {
-					transform(c, opt)
+					transform(c, opt, false)
 					unwrap(n, c)
 				} else {
-					n.InsertBefore(renderCut(c, opt), c)
+					transform(c, opt, true)
+					n.InsertBefore(renderCut(c), c)
 					n.RemoveChild(c)
 				}
 			case "iframe":
 				if !AllowedFrame(attr(c, "src")) {
 					n.RemoveChild(c)
 				} else {
-					transform(c, opt)
+					transform(c, opt, inCut)
 				}
 			case "img":
 				rewriteImg(c, opt)
-				transform(c, opt)
+				if inCut {
+					setAttr(c, "loading", "lazy")
+				}
+				transform(c, opt, inCut)
 			default:
-				transform(c, opt)
+				transform(c, opt, inCut)
 			}
 		}
 		c = next
@@ -111,22 +116,35 @@ func renderUser(n *html.Node, opt Options) *html.Node {
 	return span
 }
 
-func renderCut(n *html.Node, opt Options) *html.Node {
+func renderCut(n *html.Node) *html.Node {
 	text := strings.TrimSpace(attr(n, "text"))
 	if text == "" {
 		text = "Read more"
 	}
-	if len(text) > 80 {
-		text = text[:80]
+	text = trimRunes(text, 80)
+	details := &html.Node{Type: html.ElementNode, Data: "details", DataAtom: atom.Details}
+	details.Attr = []html.Attribute{{Key: "class", Val: "cut"}}
+	summary := &html.Node{Type: html.ElementNode, Data: "summary", DataAtom: atom.Summary}
+	summary.AppendChild(&html.Node{Type: html.TextNode, Data: text})
+	details.AppendChild(summary)
+	for n.FirstChild != nil {
+		ch := n.FirstChild
+		n.RemoveChild(ch)
+		details.AppendChild(ch)
 	}
-	href := opt.ReadMoreURL
-	if href == "" {
-		href = "#"
+	return details
+}
+
+func trimRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
 	}
-	a := &html.Node{Type: html.ElementNode, Data: "a"}
-	a.Attr = []html.Attribute{{Key: "href", Val: href}, {Key: "class", Val: "cut"}}
-	a.AppendChild(&html.Node{Type: html.TextNode, Data: text})
-	return a
+	i := 0
+	for k := 0; k < n; k++ {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+	}
+	return s[:i]
 }
 
 func rewriteImg(n *html.Node, opt Options) {
