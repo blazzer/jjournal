@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"journal/lj"
 	"journal/render"
 	"journal/store"
 	"journal/web"
@@ -101,7 +102,7 @@ func banner(u store.User) string {
 	switch u.SyncStatus {
 	case store.StatusAuthFailed:
 		if strings.Contains(strings.ToLower(u.SyncError), "digest authentication") {
-			return "LiveJournal digest access is off. Enable it at https://www.livejournal.com/manage/auth_digest and log in again."
+			return "LiveJournal digest access is off. Enable it at " + lj.DigestManageURL + " and log in again."
 		}
 		return "LiveJournal rejected the saved login. Log in again to resume syncing."
 	case store.StatusBlocked:
@@ -174,6 +175,7 @@ func oneEntry(s *web.Server, e store.Entry, full bool, locals map[string]string)
 		Full:        full,
 		ReadMoreURL: readMore,
 		LocalUsers:  locals,
+		JournalURL:  lj.ProfileURL,
 		SignImage: func(src string) string {
 			if s.Images == nil {
 				return ""
@@ -220,7 +222,7 @@ func profileURL(name string, locals map[string]string) string {
 	if href, ok := locals[name]; ok {
 		return href
 	}
-	return "https://" + name + ".livejournal.com/"
+	return lj.ProfileURL(name)
 }
 
 func pagerURLs(path, filter string, skip int, hasPrev, hasNext bool) (prev, next string) {
@@ -266,7 +268,7 @@ func thread(s *web.Server, comments []store.Comment, csrf, action string, viewer
 			src := byID[n.ID]
 			body := "[deleted]"
 			if !n.Deleted {
-				body = render.RenderBody(n.BodyHTML, render.Options{Full: true, LocalUsers: localUsers(s), SignImage: func(src string) string {
+				body = render.RenderBody(n.BodyHTML, render.Options{Full: true, LocalUsers: localUsers(s), JournalURL: lj.ProfileURL, SignImage: func(src string) string {
 					if s.Images == nil {
 						return ""
 					}

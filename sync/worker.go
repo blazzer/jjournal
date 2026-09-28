@@ -62,7 +62,7 @@ func New(st *store.Store, src lj.LJSource, proxy *render.Proxy, maxConcurrent in
 		sem:         make(chan struct{}, maxConcurrent),
 		kick:        make(chan int64, 32),
 		running:     map[int64]bool{},
-		APIHost:     "www.livejournal.com",
+		APIHost:     lj.APIHost,
 		now:         time.Now,
 		randFloat:   Unit,
 		log:         slog.Default(),

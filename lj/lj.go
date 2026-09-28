@@ -15,6 +15,7 @@ import (
 
 const (
 	XMLRPCEndpoint = "https://www.livejournal.com/interface/xmlrpc"
+	APIHost        = "www.livejournal.com"
 	ClientVersion  = "Journal/1.0"
 	ItemShow       = 50
 	MaxScrapePages = 5
@@ -322,6 +323,11 @@ func LooksLikeCaptcha(body []byte) bool {
 func LooksLikeLoginPage(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "<form") && strings.Contains(s, `type="password"`)
+}
+
+// ProfileURL is the public journal home for a LiveJournal username.
+func ProfileURL(name string) string {
+	return "https://" + name + ".livejournal.com/"
 }
 
 // DefaultDigestURL is one user's authenticated RSS feed.

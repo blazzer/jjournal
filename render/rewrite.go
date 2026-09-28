@@ -14,6 +14,7 @@ type Options struct {
 	Full        bool
 	ReadMoreURL string
 	LocalUsers  map[string]string
+	JournalURL  func(name string) string
 	SignImage   func(src string) string
 }
 
@@ -101,7 +102,10 @@ func renderUser(n *html.Node, opt Options) *html.Node {
 		{Key: "width", Val: "16"},
 		{Key: "height", Val: "16"},
 	}
-	href := "https://" + name + ".livejournal.com/"
+	href := ""
+	if opt.JournalURL != nil {
+		href = opt.JournalURL(name)
+	}
 	if opt.LocalUsers != nil {
 		if local, ok := opt.LocalUsers[name]; ok && local != "" {
 			href = local
