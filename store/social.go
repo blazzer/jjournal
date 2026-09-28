@@ -56,7 +56,7 @@ func (s *Store) ReplaceLJFriends(ctx context.Context, userID int64, friends []lj
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO lj_friends(user_id, friend_lj_username, groupmask, synced_at) VALUES (?, ?, ?, ?)`,
-			userID, name, f.GroupMask, formatTime(at)); err != nil {
+			userID, name, f.GroupMask, FormatTime(at)); err != nil {
 			return err
 		}
 	}

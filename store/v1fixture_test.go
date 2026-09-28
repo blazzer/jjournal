@@ -9,12 +9,11 @@ import (
 	"testing"
 )
 
-// buildV1 applies migrations 001 and 002 plus testdata/v1_seed.sql, then any
-// later migrations through Open. Phase 0 has no later migrations.
-func buildV1(t *testing.T) *Store {
+// seedV1Path applies migrations 001 and 002 plus testdata/v1_seed.sql and
+// returns the database path. Later migrations are not applied yet.
+func seedV1Path(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "v1.db")
+	path := filepath.Join(t.TempDir(), "v1.db")
 	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		t.Fatal(err)
@@ -31,10 +30,8 @@ func buildV1(t *testing.T) *Store {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, stmt := range splitSQL(string(body)) {
-			if _, err := db.Exec(stmt); err != nil {
-				t.Fatalf("%s: %v", name, err)
-			}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("%s: %v", name, err)
 		}
 		if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)`, name, "2024-01-01T00:00:00Z"); err != nil {
 			t.Fatal(err)
@@ -44,14 +41,19 @@ func buildV1(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stmt := range splitSQL(string(seed)) {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := db.Exec(string(seed)); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return path
+}
+
+// buildV1 loads the v1 fixture and applies every migration.
+func buildV1(t *testing.T) *Store {
+	t.Helper()
+	path := seedV1Path(t)
 	s, err := Open(path, testKey())
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -33,8 +32,10 @@ var migrationFS embed.FS
 
 // Store is the SQLite database.
 type Store struct {
-	db  *sql.DB
-	key []byte
+	db      *sql.DB
+	key     []byte
+	path    string
+	dataDir string
 }
 
 // User is a local account. The first user (id 1) is the admin.
@@ -63,6 +64,11 @@ type Session struct {
 
 // Open opens or creates the database and applies migrations.
 func Open(path string, key []byte) (*Store, error) {
+	return OpenWithDataDir(path, key, "")
+}
+
+// OpenWithDataDir is Open, writing pre-migration backups under dataDir/backups.
+func OpenWithDataDir(path string, key []byte, dataDir string) (*Store, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("store: secret key must be 32 bytes")
 	}
@@ -76,94 +82,32 @@ func Open(path string, key []byte) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, key: key}
-	if err := s.migrate(); err != nil {
+	s := &Store{db: db, key: key, path: path, dataDir: dataDir}
+	if err := s.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-func sqliteDSN(path string) string {
+func sqlitePath(path string) string {
 	p := filepath.ToSlash(path)
 	p = strings.ReplaceAll(p, "?", "%3F")
 	p = strings.ReplaceAll(p, "#", "%23")
 	p = strings.ReplaceAll(p, " ", "%20")
-	return "file:" + p + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	return p
+}
+
+func sqliteDSN(path string) string {
+	return "file:" + sqlitePath(path) + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+}
+
+func sqliteReadOnlyDSN(path string) string {
+	return "file:" + sqlitePath(path) + "?mode=ro"
 }
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
-
-func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL
-	)`); err != nil {
-		return err
-	}
-	entries, err := migrationFS.ReadDir("migrations")
-	if err != nil {
-		return err
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		var n int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&n); err != nil {
-			return err
-		}
-		if n > 0 {
-			continue
-		}
-		body, err := migrationFS.ReadFile("migrations/" + name)
-		if err != nil {
-			return err
-		}
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		for _, stmt := range splitSQL(string(body)) {
-			if _, err := tx.Exec(stmt); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("store: %s: %w", name, err)
-			}
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)`, name, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func splitSQL(s string) []string {
-	var b strings.Builder
-	for _, line := range strings.Split(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "--") {
-			continue
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	var out []string
-	for _, part := range strings.Split(b.String(), ";") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
 
 // NormalizeSkip clamps a paging offset.
 func NormalizeSkip(skip int) int {
@@ -206,7 +150,7 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 		res, err := s.db.ExecContext(ctx, `INSERT INTO users(
 			lj_username, display_name, lj_pw_md5_enc, lj_session_enc, sync_status, sync_error,
 			next_sync_at, created_at) VALUES (?, ?, ?, ?, 'ok', '', ?, ?)`,
-			username, display, pwEnc, nullBytes(cookieEnc), formatTime(now), formatTime(now))
+			username, display, pwEnc, nullBytes(cookieEnc), FormatTime(now), FormatTime(now))
 		if err != nil {
 			return User{}, err
 		}
@@ -228,7 +172,7 @@ func (s *Store) UpsertLogin(ctx context.Context, username, display, pwMD5, cooki
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE users SET display_name=?, lj_pw_md5_enc=?, lj_session_enc=?,
 		sync_status='ok', sync_error='', sync_fail_count=0, blocked_until=NULL, next_sync_at=? WHERE id=?`,
-		display, pwEnc, nullBytes(cookieEnc), formatTime(now), existing.ID)
+		display, pwEnc, nullBytes(cookieEnc), FormatTime(now), existing.ID)
 	if err != nil {
 		return User{}, err
 	}
@@ -348,7 +292,7 @@ func (s *Store) SaveSecrets(ctx context.Context, userID int64, pwMD5, cookie str
 // MarkSyncOK records a successful sync.
 func (s *Store) MarkSyncOK(ctx context.Context, userID int64, at, next time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='ok', sync_error='', sync_fail_count=0,
-		blocked_until=NULL, last_synced_at=?, next_sync_at=? WHERE id=?`, formatTime(at), formatTime(next), userID)
+		blocked_until=NULL, last_synced_at=?, next_sync_at=? WHERE id=?`, FormatTime(at), FormatTime(next), userID)
 	return err
 }
 
@@ -364,7 +308,7 @@ func (s *Store) SetBackfillSkip(ctx context.Context, userID int64, skip int) err
 // MarkSyncError records a retryable failure and the next attempt.
 func (s *Store) MarkSyncError(ctx context.Context, userID int64, msg string, failCount int, next time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='error', sync_error=?, sync_fail_count=?, next_sync_at=? WHERE id=?`,
-		clamp(msg, 240), failCount, formatTime(next), userID)
+		clamp(msg, 240), failCount, FormatTime(next), userID)
 	return err
 }
 
@@ -377,13 +321,13 @@ func (s *Store) MarkAuthFailed(ctx context.Context, userID int64, msg string) er
 // MarkBlocked pauses sync until until.
 func (s *Store) MarkBlocked(ctx context.Context, userID int64, msg string, until time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET sync_status='blocked', sync_error=?, blocked_until=?, next_sync_at=? WHERE id=?`,
-		clamp(msg, 240), formatTime(until), formatTime(until), userID)
+		clamp(msg, 240), FormatTime(until), FormatTime(until), userID)
 	return err
 }
 
 // TouchFriends records a friend-list refresh.
 func (s *Store) TouchFriends(ctx context.Context, userID int64, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET friends_synced_at=? WHERE id=?`, formatTime(at), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET friends_synced_at=? WHERE id=?`, FormatTime(at), userID)
 	return err
 }
 
@@ -393,7 +337,7 @@ func (s *Store) UsersDue(ctx context.Context, now time.Time) ([]int64, error) {
 		WHERE sync_status != 'auth_failed'
 		  AND (blocked_until IS NULL OR blocked_until <= ?)
 		  AND (next_sync_at IS NULL OR next_sync_at <= ?)
-		ORDER BY id`, formatTime(now), formatTime(now))
+		ORDER BY id`, FormatTime(now), FormatTime(now))
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +360,7 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, expires time.Ti
 		return "", err
 	}
 	id := hex.EncodeToString(buf[:])
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id, user_id, expires_at) VALUES (?, ?, ?)`, id, userID, formatTime(expires))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id, user_id, expires_at) VALUES (?, ?, ?)`, id, userID, FormatTime(expires))
 	return id, err
 }
 
@@ -440,27 +384,6 @@ func (s *Store) LookupSession(ctx context.Context, id string) (Session, error) {
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=?`, id)
 	return err
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339Nano)
-}
-
-func parseTime(v sql.NullString) time.Time {
-	if !v.Valid || strings.TrimSpace(v.String) == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339Nano, v.String)
-	if err != nil {
-		t, err = time.Parse(time.RFC3339, v.String)
-		if err != nil {
-			return time.Time{}
-		}
-	}
-	return t.UTC()
 }
 
 func nullBytes(b []byte) any {

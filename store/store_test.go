@@ -196,7 +196,7 @@ func TestMigratedExclusionAndNativeSecurity(t *testing.T) {
 	bob, _ := s.UpsertLogin(ctx, "bob", "Bob", strings.Repeat("b", 32), "")
 	cara, _ := s.UpsertLogin(ctx, "cara", "Cara", strings.Repeat("c", 32), "")
 	when := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := s.db.Exec(`UPDATE users SET migrated_at=? WHERE id=?`, formatTime(when), bob.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE users SET migrated_at=? WHERE id=?`, FormatTime(when), bob.ID); err != nil {
 		t.Fatal(err)
 	}
 	before := LJEntryIn{ItemID: 1, Journal: "bob", Author: "bob", Security: "public", BodyHTML: "old", EventTime: when.Add(-time.Hour)}
@@ -304,7 +304,7 @@ func TestMigratedExclusionAndNativeSecurity(t *testing.T) {
 	}
 	var migrated string
 	s.db.QueryRow(`SELECT migrated_at FROM users WHERE id=?`, bob.ID).Scan(&migrated)
-	if migrated != formatTime(when) {
+	if migrated != FormatTime(when) {
 		t.Fatal("first post should not move migrated_at", migrated)
 	}
 }

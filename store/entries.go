@@ -27,24 +27,24 @@ type LJEntryIn struct {
 
 // Entry is a stored post.
 type Entry struct {
-	ID            int64
-	Source        string
-	Author        string
-	Journal       string
-	ItemID        int64
-	URL           string
-	Subject       string
-	BodyHTML      string
-	Security      string
-	AllowMask     uint32
-	EventTime     time.Time
-	UserpicURL    string
-	Mood          string
-	Music         string
-	CommentCount  int
-	JournalType   string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID           int64
+	Source       string
+	Author       string
+	Journal      string
+	ItemID       int64
+	URL          string
+	Subject      string
+	BodyHTML     string
+	Security     string
+	AllowMask    uint32
+	EventTime    time.Time
+	UserpicURL   string
+	Mood         string
+	Music        string
+	CommentCount int
+	JournalType  string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Comment is a native comment.
@@ -89,8 +89,8 @@ func (s *Store) UpsertLJEntry(ctx context.Context, viewerID int64, in LJEntryIn)
 			security, allowmask, event_time, userpic_url, mood, music, lj_comment_count, journal_type,
 			created_at, updated_at) VALUES ('lj', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Author, in.Journal, in.ItemID, in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask,
-			formatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType,
-			formatTime(now), formatTime(now))
+			FormatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType,
+			FormatTime(now), FormatTime(now))
 		if err != nil {
 			return 0, err
 		}
@@ -104,8 +104,8 @@ func (s *Store) UpsertLJEntry(ctx context.Context, viewerID int64, in LJEntryIn)
 		_, err = tx.ExecContext(ctx, `UPDATE entries SET author_lj_username=?, lj_url=?, subject=?, body_html=?,
 			security=?, allowmask=?, event_time=?, userpic_url=?, mood=?, music=?, lj_comment_count=?,
 			journal_type=?, updated_at=? WHERE id=?`,
-			in.Author, in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask, formatTime(in.EventTime),
-			in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType, formatTime(now), id)
+			in.Author, in.URL, in.Subject, in.BodyHTML, in.Security, in.AllowMask, FormatTime(in.EventTime),
+			in.UserpicURL, in.Mood, in.Music, in.CommentCount, in.JournalType, FormatTime(now), id)
 		if err != nil {
 			return 0, err
 		}
@@ -147,7 +147,7 @@ func (s *Store) CreateNativeEntry(ctx context.Context, authorID int64, in LJEntr
 		event_time, userpic_url, mood, music, lj_comment_count, journal_type, created_at, updated_at)
 		VALUES ('native', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 0, 'P', ?, ?)`,
 		author.Username, author.Username, in.Subject, in.BodyHTML, in.Security, in.AllowMask,
-		formatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, formatTime(now), formatTime(now))
+		FormatTime(in.EventTime), in.UserpicURL, in.Mood, in.Music, FormatTime(now), FormatTime(now))
 	if err != nil {
 		return 0, err
 	}
@@ -155,7 +155,7 @@ func (s *Store) CreateNativeEntry(ctx context.Context, authorID int64, in LJEntr
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET migrated_at=? WHERE id=? AND migrated_at IS NULL`, formatTime(in.EventTime), authorID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET migrated_at=? WHERE id=? AND migrated_at IS NULL`, FormatTime(in.EventTime), authorID); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -192,7 +192,7 @@ func (s *Store) AddComment(ctx context.Context, entryID, parentID, authorID int6
 		parent = parentID
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO comments(entry_id, parent_id, author_user_id, body_html, created_at, deleted)
-		VALUES (?, ?, ?, ?, ?, 0)`, entryID, parent, authorID, body, formatTime(at))
+		VALUES (?, ?, ?, ?, ?, 0)`, entryID, parent, authorID, body, FormatTime(at))
 	if err != nil {
 		return 0, err
 	}
