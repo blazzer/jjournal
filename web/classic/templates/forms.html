@@ -170,3 +170,18 @@
 </form>
 {{template "end" .}}
 {{end}}
+
+{{define "confirm"}}
+{{template "start" .}}
+<h1>Hide {{.Name}}</h1>
+<p>{{.Name}} is on your {{.Service}} friends list. Their posts will be hidden here; your {{.Service}} list is not changed.</p>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="suppress">
+<input type="hidden" name="username" value="{{.Name}}">
+<input type="hidden" name="name" value="{{.Service}}">
+<button type="submit">Delete</button>
+</form>
+<p><a href="/manage/friends">Cancel</a></p>
+{{template "end" .}}
+{{end}}

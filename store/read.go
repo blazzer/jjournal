@@ -135,6 +135,9 @@ WHERE e.id IN (
 	  AND NOT EXISTS (
 		SELECT 1 FROM users mu WHERE mu.handle = lj.author_username
 		  AND mu.migrated_at IS NOT NULL AND mu.migrated_at <= lj.event_time)
+	  AND NOT EXISTS (
+		SELECT 1 FROM suppressions sup WHERE sup.user_id = ? AND sup.service = lj.service
+		  AND (sup.username = lj.author_username OR sup.username = lj.journal_username))
 	  AND (? = 0 OR (
 		(COALESCE((SELECT f.groupmask FROM remote_friends f JOIN accounts fa ON fa.id = f.account_id WHERE fa.user_id = ? AND f.username = lj.author_username), 0)
 		 | COALESCE((SELECT n.groupmask FROM native_friends n JOIN users fu ON fu.id = n.friend_user_id WHERE n.user_id = ? AND fu.handle = lj.author_username), 0)
@@ -148,6 +151,8 @@ WHERE e.id IN (
 		EXISTS (SELECT 1 FROM remote_friends f JOIN accounts fa ON fa.id = f.account_id WHERE fa.user_id = viewer.id AND f.username = author2.handle)
 		OR EXISTS (SELECT 1 FROM native_friends n WHERE n.user_id = viewer.id AND n.friend_user_id = author2.id)
 	  )
+	  AND NOT EXISTS (
+		SELECT 1 FROM suppressions sup WHERE sup.user_id = viewer.id AND sup.service = 'local' AND sup.username = author2.handle)
 	  AND (
 		na.security = 'public'
 		OR (na.security = 'friends' AND (
@@ -166,7 +171,7 @@ WHERE e.id IN (
 )
 ORDER BY e.event_time DESC, e.id DESC
 LIMIT ? OFFSET ?`
-	args := []any{viewerID, viewerID, groupMask, viewerID, viewerID, groupMask, viewerID, groupMask, groupMask, limit + 1, skip}
+	args := []any{viewerID, viewerID, viewerID, groupMask, viewerID, viewerID, groupMask, viewerID, groupMask, groupMask, limit + 1, skip}
 	return q, args
 }
 

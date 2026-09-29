@@ -305,6 +305,18 @@ func manage(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server, vie
 			http.Error(w, "The form expired. Go back and try again.", http.StatusBadRequest)
 			return
 		}
+		if r.FormValue("action") == "suppress" {
+			serviceName := r.FormValue("name")
+			if serviceName == "" || serviceName == "This site" {
+				serviceName = "local"
+			}
+			if err := s.Store.Suppress(r.Context(), viewer.ID, serviceName, r.FormValue("username")); err != nil {
+				web.WriteError(w, r, err)
+				return
+			}
+			http.Redirect(w, r, "/manage/friends", http.StatusSeeOther)
+			return
+		}
 		err := app.ApplyList(r.Context(), s.Store, app.ViewerFrom(viewer), app.ListAction{
 			Action:   r.FormValue("action"),
 			Username: r.FormValue("username"),
@@ -323,6 +335,14 @@ func manage(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server, vie
 			return
 		}
 		http.Redirect(w, r, "/manage/friends", http.StatusSeeOther)
+		return
+	}
+	if name := r.URL.Query().Get("confirm"); name != "" {
+		f.render(w, "confirm", struct {
+			baseView
+			Name    string
+			Service string
+		}{baseView: base(s, viewer, "Confirm", s.CSRFToken(w, r)), Name: name, Service: r.URL.Query().Get("service")})
 		return
 	}
 	managePage(f, w, r, s, viewer, "")
