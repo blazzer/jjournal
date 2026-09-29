@@ -66,6 +66,11 @@ th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.35re
 .people { list-style: none; padding: 0; }
 .people li { display: flex; gap: 0.6rem; align-items: center; }
 .people form { margin: 0; }
+.sticky { position: sticky; top: 0; background: var(--paper); z-index: 1; }
+.modern { --accent: #1d4e89; }
+@media (prefers-reduced-motion: reduce) {
+  .sticky { position: static; }
+}
 @media (max-width: 700px) {
   .columns { display: block; }
   .side { width: auto; margin-bottom: 1rem; }

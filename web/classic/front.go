@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -22,7 +23,12 @@ type Front struct {
 
 // New parses the classic templates.
 func New() (*Front, error) {
-	tmpl, err := template.ParseFS(assets, "templates/*.html")
+	return Parse(assets, "templates/*.html")
+}
+
+// Parse builds a front-end from a template set that uses the classic handler names.
+func Parse(fsys fs.FS, pattern string) (*Front, error) {
+	tmpl, err := template.ParseFS(fsys, pattern)
 	if err != nil {
 		return nil, err
 	}

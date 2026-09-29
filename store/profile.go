@@ -129,7 +129,7 @@ func (s *Store) RedeemInvite(ctx context.Context, token, handle, display, passph
 	if isAdmin {
 		adminFlag = 1
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO users(handle, display_name, is_admin, ui, created_at) VALUES (?, ?, ?, 'classic', ?)`,
+	res, err := tx.ExecContext(ctx, `INSERT INTO users(handle, display_name, is_admin, ui, created_at) VALUES (?, ?, ?, 'modern', ?)`,
 		handle, display, adminFlag, FormatTime(now))
 	if err != nil {
 		return User{}, err

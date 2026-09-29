@@ -1,0 +1,187 @@
+{{define "update"}}
+{{template "start" .}}
+<h1>Update</h1>
+<p>To hide part of a post on the reading page, wrap it in &lt;lj-cut text="Read more"&gt;hidden text&lt;/lj-cut&gt;.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/update">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Subject <input name="subject" maxlength="200"></label>
+<label>Entry <textarea name="body" rows="12" required></textarea></label>
+<label>Security
+<select name="security">
+<option value="public">Public</option>
+<option value="friends">Friends</option>
+<option value="private">Private</option>
+<option value="custom">Custom groups</option>
+</select>
+</label>
+<fieldset>
+<legend>Groups for a custom post</legend>
+{{range .Groups}}<label><input type="checkbox" name="group" value="{{.ID}}"> {{.Name}}</label>{{end}}
+</fieldset>
+<label>Mood <input name="mood" maxlength="80"></label>
+<label>Music <input name="music" maxlength="80"></label>
+<label>Userpic URL <input name="userpic" type="url"></label>
+<button type="submit">Post</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "manage"}}
+{{template "start" .}}
+<h1>Friends</h1>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<h2>On this site</h2>
+{{if not .Native}}<p>No one here yet.</p>{{end}}
+<ul class="people">
+{{range .Native}}<li>{{.Username}}
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="action" value="remove_friend">
+<input type="hidden" name="friend_id" value="{{.UserID}}">
+<button type="submit">Remove</button>
+</form></li>{{end}}
+</ul>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="add_friend">
+<label>Username <input name="username" required></label>
+{{range .Groups}}{{if eq .Origin "native"}}<label><input type="checkbox" name="group" value="{{.ID}}"> {{.Name}}</label>{{end}}{{end}}
+<button type="submit">Add friend</button>
+</form>
+<h2>Mirrored friends</h2>
+<p>These come from sync and cannot be edited here.</p>
+<ul class="people">{{range .LJ}}<li>{{.Username}}</li>{{else}}<li>None yet.</li>{{end}}</ul>
+<h2>Groups</h2>
+<ul class="people">
+{{range .Groups}}<li>{{.Name}} {{if eq .Origin "lj"}}(mirrored){{end}}
+{{if eq .Origin "native"}}<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<input type="hidden" name="action" value="remove_group">
+<input type="hidden" name="group_id" value="{{.ID}}">
+<button type="submit">Remove</button>
+</form>{{end}}</li>{{end}}
+</ul>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="add_group">
+<label>New group <input name="name" maxlength="40" required></label>
+<button type="submit">Add group</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "profile"}}
+{{template "start" .}}
+<h1>{{.Display}}</h1>
+<img class="userpic" src="{{.Pic}}" alt="">
+<p>@{{.ProfileName}}</p>
+<p>Joined {{.Joined}}</p>
+{{if .Migrated}}<p>Writing here since {{.Migrated}}</p>{{end}}
+<p>{{.LJCount}} mirrored friends, {{.NativeCount}} friends here.</p>
+<p><a href="{{.JournalURL}}">Journal</a></p>
+{{template "end" .}}
+{{end}}
+
+{{define "admin"}}
+{{template "start" .}}
+<h1>Sync</h1>
+<table>
+<thead><tr><th>User</th><th>Status</th><th>Last sync</th><th>Moved</th><th>Error</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td>{{.Username}}</td>
+<td>{{.Status}}</td>
+<td>{{.Synced}}</td>
+<td>{{.Migrated}}</td>
+<td>{{.Error}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{if .Notice}}<p class="banner">{{.Notice}}</p>{{end}}
+<p>{{.Legacy}} legacy secrets.</p>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="invite">
+<label><input type="checkbox" name="as_admin" value="1"> Admin</label>
+<button type="submit">Create invite</button>
+</form>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="recover">
+<label>Handle <input name="handle"></label>
+<button type="submit">Recovery link</button>
+</form>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="purge">
+<button type="submit">Purge legacy secrets</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "signup"}}
+{{template "start" .}}
+<h1>Create a profile</h1>
+<p>The operator of this site can technically read everything stored here, including mirrored friends-locked posts.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/signup">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Handle <input name="handle" required></label>
+<label>Display name <input name="display"></label>
+<label>Passphrase <input type="password" name="passphrase" required></label>
+<label>Confirm <input type="password" name="confirm" required></label>
+<button type="submit">Create profile</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "recover"}}
+{{template "start" .}}
+<h1>New passphrase</h1>
+<p>The old vault is deleted. Service passwords must be entered again.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/recover">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Service username <input name="service_user"></label>
+<label>Service password <input type="password" name="service_password"></label>
+<label>New passphrase <input type="password" name="passphrase" required></label>
+<label>Confirm <input type="password" name="confirm" required></label>
+<button type="submit">Reset</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "settings"}}
+{{template "start" .}}
+<h1>Settings</h1>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/settings">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Current passphrase <input type="password" name="passphrase" required></label>
+<label>New passphrase <input type="password" name="next" required></label>
+<button type="submit">Change passphrase</button>
+</form>
+<form method="post" action="/settings">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="delete">
+<label>Passphrase <input type="password" name="passphrase" required></label>
+<button type="submit">Delete profile</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "confirm"}}
+{{template "start" .}}
+<h1>Hide {{.Name}}</h1>
+<p>{{.Name}} is on your {{.Service}} friends list. Their posts will be hidden here; your {{.Service}} list is not changed.</p>
+<form method="post" action="/manage/friends">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="suppress">
+<input type="hidden" name="username" value="{{.Name}}">
+<input type="hidden" name="name" value="{{.Service}}">
+<button type="submit">Delete</button>
+</form>
+<p><a href="/manage/friends">Cancel</a></p>
+{{template "end" .}}
+{{end}}

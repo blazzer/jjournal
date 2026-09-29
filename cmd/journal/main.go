@@ -24,6 +24,7 @@ import (
 	jsync "journal/sync"
 	"journal/web"
 	"journal/web/classic"
+	"journal/web/modern"
 )
 
 func main() {
@@ -233,11 +234,17 @@ func serve(ctx context.Context, cfg web.Config) error {
 		st.Close()
 		return err
 	}
+	mod, err := modern.New()
+	if err != nil {
+		st.Close()
+		return err
+	}
 	h, err := web.New(cfg, st, src, worker, pics, images, front)
 	if err != nil {
 		st.Close()
 		return err
 	}
+	h.Modern = mod
 	h.Metrics = reg
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)

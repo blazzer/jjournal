@@ -37,6 +37,7 @@ type Server struct {
 	Images  *render.Proxy
 	Metrics *metrics.Registry
 	Front   FrontEnd
+	Modern  FrontEnd
 	Limit   Limiter
 	Vaults  *vault.Cache
 	Limits  *ratelimit.Gate
@@ -126,6 +127,13 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
+func (s *Server) face(u store.User) FrontEnd {
+	if s.Modern != nil && (u.ID == 0 || u.UI == "modern") {
+		return s.Modern
+	}
+	return s.Front
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
@@ -135,27 +143,27 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /static/", s.files)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.HandleFunc("GET /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
-	mux.HandleFunc("POST /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
-	mux.HandleFunc("GET /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Signup(w, r, s) }))
-	mux.HandleFunc("POST /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Signup(w, r, s) }))
-	mux.HandleFunc("GET /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Recover(w, r, s) }))
-	mux.HandleFunc("POST /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Recover(w, r, s) }))
-	mux.HandleFunc("GET /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
-	mux.HandleFunc("POST /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
+	mux.HandleFunc("GET /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Login(w, r, s) }))
+	mux.HandleFunc("POST /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Login(w, r, s) }))
+	mux.HandleFunc("GET /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Signup(w, r, s) }))
+	mux.HandleFunc("POST /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Signup(w, r, s) }))
+	mux.HandleFunc("GET /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Recover(w, r, s) }))
+	mux.HandleFunc("POST /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.face(store.User{}).Recover(w, r, s) }))
+	mux.HandleFunc("GET /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Logout(w, r, s, u) }))
+	mux.HandleFunc("POST /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Logout(w, r, s, u) }))
 	mux.HandleFunc("GET /img", s.authed(func(w http.ResponseWriter, r *http.Request, _ store.User) {
 		s.Images.ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /userpics/{name}", s.authed(s.userpic))
-	mux.HandleFunc("GET /{$}", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Home(w, r, s, u) }))
-	mux.HandleFunc("GET /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Update(w, r, s, u) }))
-	mux.HandleFunc("POST /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Update(w, r, s, u) }))
-	mux.HandleFunc("GET /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Manage(w, r, s, u) }))
-	mux.HandleFunc("POST /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Manage(w, r, s, u) }))
-	mux.HandleFunc("GET /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
-	mux.HandleFunc("POST /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
-	mux.HandleFunc("GET /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Settings(w, r, s, u) }))
-	mux.HandleFunc("POST /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Settings(w, r, s, u) }))
+	mux.HandleFunc("GET /{$}", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Home(w, r, s, u) }))
+	mux.HandleFunc("GET /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Update(w, r, s, u) }))
+	mux.HandleFunc("POST /update", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Update(w, r, s, u) }))
+	mux.HandleFunc("GET /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Manage(w, r, s, u) }))
+	mux.HandleFunc("POST /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Manage(w, r, s, u) }))
+	mux.HandleFunc("GET /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Admin(w, r, s, u) }))
+	mux.HandleFunc("POST /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Admin(w, r, s, u) }))
+	mux.HandleFunc("GET /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Settings(w, r, s, u) }))
+	mux.HandleFunc("POST /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.face(u).Settings(w, r, s, u) }))
 	mux.HandleFunc("GET /{path...}", s.userPath)
 	mux.HandleFunc("POST /{path...}", s.userPath)
 	return s.wrap(mux)
@@ -174,13 +182,13 @@ func (s *Server) userPath(w http.ResponseWriter, r *http.Request) {
 	s.withUser(w, r, func(w http.ResponseWriter, r *http.Request, viewer store.User) {
 		switch kind {
 		case "friends":
-			s.Front.Friends(w, r, s, viewer, user)
+			s.face(viewer).Friends(w, r, s, viewer, user)
 		case "journal":
-			s.Front.Journal(w, r, s, viewer, user)
+			s.face(viewer).Journal(w, r, s, viewer, user)
 		case "profile":
-			s.Front.Profile(w, r, s, viewer, user)
+			s.face(viewer).Profile(w, r, s, viewer, user)
 		case "entry":
-			s.Front.Entry(w, r, s, viewer, user, id)
+			s.face(viewer).Entry(w, r, s, viewer, user, id)
 		default:
 			http.NotFound(w, r)
 		}

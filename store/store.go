@@ -57,6 +57,7 @@ type User struct {
 	CreatedAt       time.Time
 	BackfillSkip    int
 	HasVault        bool
+	UI              string
 }
 
 // Session is a browser login.
@@ -296,7 +297,7 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 const userSelect = `SELECT u.id, u.handle, u.display_name, u.is_admin, u.migrated_at,
 	COALESCE(a.sync_status,'ok'), COALESCE(a.sync_error,''), COALESCE(a.sync_fail_count,0),
 	a.last_synced_at, a.friends_synced_at, a.blocked_until, a.next_sync_at, u.created_at,
-	COALESCE(a.walk_skip,0), (u.dek_wrapped IS NOT NULL)
+	COALESCE(a.walk_skip,0), (u.dek_wrapped IS NOT NULL), u.ui
 	FROM users u LEFT JOIN accounts a ON a.user_id = u.id AND a.service = 'livejournal'`
 
 func (s *Store) scanUser(row *sql.Row) (User, error) {
@@ -305,7 +306,7 @@ func (s *Store) scanUser(row *sql.Row) (User, error) {
 	var created string
 	var admin, hasVault int
 	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
-		&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault)
+		&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault, &u.UI)
 	u.IsAdmin = admin != 0
 	u.HasVault = hasVault != 0
 	if err != nil {
@@ -334,7 +335,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		var created string
 		var admin, hasVault int
 		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
-			&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault); err != nil {
+			&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault, &u.UI); err != nil {
 			return nil, err
 		}
 		u.MigratedAt = parseTime(migrated)
