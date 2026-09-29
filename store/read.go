@@ -127,7 +127,11 @@ func friendsQuery(viewerID int64, groupMask uint32, skip, limit int) (string, []
 WHERE e.id IN (
 	SELECT lj.id FROM entries lj
 	WHERE lj.source = 'remote'
-	  AND EXISTS (SELECT 1 FROM entry_visibility v WHERE v.entry_id = lj.id AND v.viewer_user_id = ?)
+	  AND (
+		EXISTS (SELECT 1 FROM entry_visibility v WHERE v.entry_id = lj.id AND v.viewer_user_id = ?)
+		OR (lj.security = 'public' AND EXISTS (
+			SELECT 1 FROM subscriptions sub WHERE sub.user_id = ? AND sub.service = lj.service AND sub.journal = lj.journal_username))
+	  )
 	  AND NOT EXISTS (
 		SELECT 1 FROM users mu WHERE mu.handle = lj.author_username
 		  AND mu.migrated_at IS NOT NULL AND mu.migrated_at <= lj.event_time)
@@ -162,7 +166,7 @@ WHERE e.id IN (
 )
 ORDER BY e.event_time DESC, e.id DESC
 LIMIT ? OFFSET ?`
-	args := []any{viewerID, groupMask, viewerID, viewerID, groupMask, viewerID, groupMask, groupMask, limit + 1, skip}
+	args := []any{viewerID, viewerID, groupMask, viewerID, viewerID, groupMask, viewerID, groupMask, groupMask, limit + 1, skip}
 	return q, args
 }
 
