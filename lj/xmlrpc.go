@@ -185,6 +185,15 @@ func (x *XMLRPC) FriendsPage(ctx context.Context, s Session, since time.Time) ([
 	return FilterSince(parseEntries(asSlice(m["entries"]), s.Username), since), nil
 }
 
+// Page loads one friends-page window. skip is the number of newer entries to pass over.
+func (x *XMLRPC) Page(ctx context.Context, s Session, skip int) ([]LJEntry, bool, error) {
+	entries, err := x.FriendsPageSkip(ctx, s, skip)
+	if err != nil {
+		return nil, false, err
+	}
+	return entries, len(entries) < ItemShow, nil
+}
+
 // FriendsPageSkip loads one page. skip is the number of newer entries to pass over.
 // LiveJournal returns at most ItemShow (50) entries. skip above MaxFriendsSkip is refused
 // locally. A server fault for the skip parameter comes back as LimitError.

@@ -33,6 +33,8 @@ type LJSource interface {
 	Login(ctx context.Context, user string, pwMD5 string) (Session, error)
 	FriendList(ctx context.Context, s Session) ([]LJFriend, error)
 	FriendsPage(ctx context.Context, s Session, since time.Time) ([]LJEntry, error)
+	// Page loads one friends-page window. end is true when the service has no older page.
+	Page(ctx context.Context, s Session, skip int) (entries []LJEntry, end bool, err error)
 }
 
 // Session is an in-memory LJ login. String redacts secrets.

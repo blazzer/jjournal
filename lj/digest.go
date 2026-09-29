@@ -69,6 +69,18 @@ func (d *Digest) FriendsPage(ctx context.Context, s Session, since time.Time) ([
 	return FilterSince(entries, since), nil
 }
 
+// Page returns this user's feed. Older skips are not available over digest.
+func (d *Digest) Page(ctx context.Context, s Session, skip int) ([]LJEntry, bool, error) {
+	if skip > 0 {
+		return nil, true, &UnsupportedError{Source: "digest", Method: "Page"}
+	}
+	entries, err := d.FriendsPage(ctx, s, time.Time{})
+	if err != nil {
+		return nil, false, err
+	}
+	return entries, true, nil
+}
+
 // Fetch performs an anonymous or digest-authenticated GET.
 // When authenticate is true, secret is the HTTP digest password.
 func (d *Digest) Fetch(ctx context.Context, user, secret string, authenticate bool) ([]byte, int, error) {

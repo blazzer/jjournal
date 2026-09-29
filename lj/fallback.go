@@ -80,30 +80,24 @@ func (f *Fallback) FriendList(ctx context.Context, s Session) ([]LJFriend, error
 	return nil, preferErr(errs)
 }
 
-// FriendsPageSkip pages the first source that can. A skip the server rejects
-// is returned as-is so the caller stops instead of trying another backend.
-func (f *Fallback) FriendsPageSkip(ctx context.Context, s Session, skip int) ([]LJEntry, error) {
+// Page loads one friends-page window from the first backend that can.
+func (f *Fallback) Page(ctx context.Context, s Session, skip int) ([]LJEntry, bool, error) {
 	var errs []error
 	for _, src := range f.sources {
-		p, ok := src.(interface {
-			FriendsPageSkip(context.Context, Session, int) ([]LJEntry, error)
-		})
-		if !ok {
-			continue
-		}
-		entries, err := p.FriendsPageSkip(ctx, s, skip)
+		entries, end, err := src.Page(ctx, s, skip)
 		if err == nil || IsAuth(err) || IsBlocked(err) || IsLimit(err) {
-			return entries, err
+			return entries, end, err
 		}
 		errs = append(errs, err)
 	}
 	if skip > 0 {
-		return nil, &LimitError{Param: "skip"}
+		return nil, true, &LimitError{Param: "skip"}
 	}
 	if len(errs) == 0 {
-		return f.FriendsPage(ctx, s, time.Time{})
+		entries, err := f.FriendsPage(ctx, s, time.Time{})
+		return entries, true, err
 	}
-	return nil, preferErr(errs)
+	return nil, false, preferErr(errs)
 }
 
 func (f *Fallback) FriendsPage(ctx context.Context, s Session, since time.Time) ([]LJEntry, error) {

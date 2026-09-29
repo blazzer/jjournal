@@ -301,15 +301,8 @@ func (w *Worker) fetchPage(ctx context.Context, sess *lj.Session, pw string, use
 }
 
 func (w *Worker) pageAt(ctx context.Context, sess lj.Session, skip int) ([]lj.LJEntry, error) {
-	if p, ok := w.Source.(interface {
-		FriendsPageSkip(context.Context, lj.Session, int) ([]lj.LJEntry, error)
-	}); ok {
-		return p.FriendsPageSkip(ctx, sess, skip)
-	}
-	if skip > 0 {
-		return nil, nil
-	}
-	return w.Source.FriendsPage(ctx, sess, time.Time{})
+	entries, _, err := w.Source.Page(ctx, sess, skip)
+	return entries, err
 }
 
 func (w *Worker) needsFriends(u store.User, now time.Time) bool {

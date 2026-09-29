@@ -103,3 +103,15 @@ func (f *Fake) FriendsPage(ctx context.Context, s Session, since time.Time) ([]L
 	}
 	return FilterSince(entries, since), nil
 }
+
+// Page returns one window. A non-zero skip is the end: the fake has a single page.
+func (f *Fake) Page(ctx context.Context, s Session, skip int) ([]LJEntry, bool, error) {
+	if skip > 0 {
+		return nil, true, nil
+	}
+	entries, err := f.FriendsPage(ctx, s, time.Time{})
+	if err != nil {
+		return nil, false, err
+	}
+	return entries, len(entries) < ItemShow, nil
+}

@@ -228,12 +228,13 @@ func (s *skipSrc) FriendList(context.Context, lj.Session) ([]lj.LJFriend, error)
 func (s *skipSrc) FriendsPage(context.Context, lj.Session, time.Time) ([]lj.LJEntry, error) {
 	return nil, nil
 }
-func (s *skipSrc) FriendsPageSkip(_ context.Context, _ lj.Session, skip int) ([]lj.LJEntry, error) {
+func (s *skipSrc) Page(_ context.Context, _ lj.Session, skip int) ([]lj.LJEntry, bool, error) {
 	s.calls = append(s.calls, skip)
 	if s.limitAt > 0 && skip >= s.limitAt {
-		return nil, &lj.LimitError{Param: "skip"}
+		return nil, true, &lj.LimitError{Param: "skip"}
 	}
-	return append([]lj.LJEntry(nil), s.pages[skip]...), nil
+	entries := append([]lj.LJEntry(nil), s.pages[skip]...)
+	return entries, len(entries) < lj.ItemShow, nil
 }
 
 func fullPage(start int, when time.Time, comments int) []lj.LJEntry {

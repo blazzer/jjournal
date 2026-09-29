@@ -85,6 +85,22 @@ func (sc *Scrape) FriendsPage(ctx context.Context, s Session, since time.Time) (
 	return FilterSince(all, since), nil
 }
 
+// Page loads one HTML friends page.
+func (sc *Scrape) Page(ctx context.Context, s Session, skip int) ([]LJEntry, bool, error) {
+	if s.Cookie == "" {
+		return nil, false, &AuthError{Reason: "missing session"}
+	}
+	body, err := sc.fetch(ctx, s, skip)
+	if err != nil {
+		return nil, false, err
+	}
+	entries, err := ParseFriendsHTML(bytes.NewReader(body))
+	if err != nil {
+		return nil, false, err
+	}
+	return entries, len(entries) < 20, nil
+}
+
 func oldestTime(entries []LJEntry) time.Time {
 	var oldest time.Time
 	for _, e := range entries {
