@@ -17,9 +17,11 @@ import (
 	"journal/lj"
 	"journal/metrics"
 	"journal/outbound"
+	"journal/ratelimit"
 	"journal/render"
 	"journal/store"
 	jsync "journal/sync"
+	"journal/vault"
 )
 
 //go:embed static/*
@@ -36,6 +38,8 @@ type Server struct {
 	Metrics *metrics.Registry
 	Front   FrontEnd
 	Limit   Limiter
+	Vaults  *vault.Cache
+	Limits  *ratelimit.Gate
 	files   http.Handler
 	handler http.Handler
 }
@@ -54,6 +58,8 @@ func New(cfg Config, st *store.Store, src lj.LJSource, worker *jsync.Worker, pic
 		Pics:   pics,
 		Images: images,
 		Front:  front,
+		Vaults: vault.NewCache(),
+		Limits: ratelimit.New(),
 		files:  http.StripPrefix("/static/", http.FileServer(http.FS(sub))),
 	}
 	s.handler = s.routes()
@@ -131,6 +137,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
 	mux.HandleFunc("POST /login", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Login(w, r, s) }))
+	mux.HandleFunc("GET /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Signup(w, r, s) }))
+	mux.HandleFunc("POST /signup", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Signup(w, r, s) }))
+	mux.HandleFunc("GET /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Recover(w, r, s) }))
+	mux.HandleFunc("POST /recover", s.page(func(w http.ResponseWriter, r *http.Request, _ store.User) { s.Front.Recover(w, r, s) }))
 	mux.HandleFunc("GET /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
 	mux.HandleFunc("POST /logout", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Logout(w, r, s, u) }))
 	mux.HandleFunc("GET /img", s.authed(func(w http.ResponseWriter, r *http.Request, _ store.User) {
@@ -144,6 +154,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /manage/friends", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Manage(w, r, s, u) }))
 	mux.HandleFunc("GET /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
 	mux.HandleFunc("POST /admin", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Admin(w, r, s, u) }))
+	mux.HandleFunc("GET /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Settings(w, r, s, u) }))
+	mux.HandleFunc("POST /settings", s.authed(func(w http.ResponseWriter, r *http.Request, u store.User) { s.Front.Settings(w, r, s, u) }))
 	mux.HandleFunc("GET /{path...}", s.userPath)
 	mux.HandleFunc("POST /{path...}", s.userPath)
 	return s.wrap(mux)
@@ -204,7 +216,7 @@ func (s *Server) wrap(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'none'; img-src 'self'; style-src 'self'; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; form-action 'self'; base-uri 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; form-action 'self'; base-uri 'self'; frame-ancestors 'none'")
 		id := r.Header.Get("X-Request-ID")
 		if !saneRequestID(id) {
 			var b [8]byte

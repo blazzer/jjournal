@@ -13,7 +13,7 @@
 <header class="top"><span class="brand">{{.SiteName}}</span></header>
 <main>
 <h1>Log in</h1>
-<p>Use the username and password from the journal you already keep. This site only reads.</p>
+<p>Sign in with your handle and passphrase. A service password works only for an account that has not created a profile yet.</p>
 {{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
 <form method="post" action="/login">
 <input type="hidden" name="csrf" value="{{.CSRF}}">

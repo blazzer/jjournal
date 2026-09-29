@@ -56,6 +56,7 @@ type User struct {
 	NextSyncAt      time.Time
 	CreatedAt       time.Time
 	BackfillSkip    int
+	HasVault        bool
 }
 
 // Session is a browser login.
@@ -295,17 +296,18 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 const userSelect = `SELECT u.id, u.handle, u.display_name, u.is_admin, u.migrated_at,
 	COALESCE(a.sync_status,'ok'), COALESCE(a.sync_error,''), COALESCE(a.sync_fail_count,0),
 	a.last_synced_at, a.friends_synced_at, a.blocked_until, a.next_sync_at, u.created_at,
-	COALESCE(a.walk_skip,0)
+	COALESCE(a.walk_skip,0), (u.dek_wrapped IS NOT NULL)
 	FROM users u LEFT JOIN accounts a ON a.user_id = u.id AND a.service = 'livejournal'`
 
 func (s *Store) scanUser(row *sql.Row) (User, error) {
 	var u User
 	var migrated, last, friends, blocked, next sql.NullString
 	var created string
-	var admin int
+	var admin, hasVault int
 	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
-		&last, &friends, &blocked, &next, &created, &u.BackfillSkip)
+		&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault)
 	u.IsAdmin = admin != 0
+	u.HasVault = hasVault != 0
 	if err != nil {
 		return User{}, err
 	}
@@ -330,9 +332,9 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		var u User
 		var migrated, last, friends, blocked, next sql.NullString
 		var created string
-		var admin int
+		var admin, hasVault int
 		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &admin, &migrated, &u.SyncStatus, &u.SyncError, &u.FailCount,
-			&last, &friends, &blocked, &next, &created, &u.BackfillSkip); err != nil {
+			&last, &friends, &blocked, &next, &created, &u.BackfillSkip, &hasVault); err != nil {
 			return nil, err
 		}
 		u.MigratedAt = parseTime(migrated)
@@ -341,6 +343,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		u.BlockedUntil = parseTime(blocked)
 		u.NextSyncAt = parseTime(next)
 		u.IsAdmin = admin != 0
+		u.HasVault = hasVault != 0
 		u.CreatedAt = parseTime(sql.NullString{String: created, Valid: created != ""})
 		out = append(out, u)
 	}
@@ -408,7 +411,9 @@ func (s *Store) MarkSyncError(ctx context.Context, userID int64, msg string, fai
 
 // MarkAuthFailed stops sync until the user logs in again.
 func (s *Store) MarkAuthFailed(ctx context.Context, userID int64, msg string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='auth_failed', sync_error=? WHERE user_id=? AND service='livejournal'`, clamp(msg, 240), userID)
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET sync_status='auth_failed', sync_error=?,
+		secret_state=CASE WHEN remember_password=1 AND password_enc IS NOT NULL THEN 'needs_unlock' ELSE 'needs_password' END
+		WHERE user_id=? AND service='livejournal'`, clamp(msg, 240), userID)
 	return err
 }
 

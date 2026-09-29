@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	github.com/microcosm-cc/bluemonday v1.0.27
+	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	modernc.org/sqlite v1.59.0
 )

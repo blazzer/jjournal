@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,27 @@ func TestBackupCommand(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join(dir, "backups", "backup-*.db"))
 	if err != nil || len(matches) != 1 {
 		t.Fatal(matches, err)
+	}
+}
+
+func TestInviteCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SECRET_KEY", base64.StdEncoding.EncodeToString(bytesRepeat()))
+	t.Setenv("DB_PATH", filepath.Join(dir, "j.db"))
+	t.Setenv("DATA_DIR", dir)
+	t.Setenv("BASE_URL", "http://127.0.0.1:8080")
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	code := run([]string{"invite", "--admin"})
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if code != 0 || !strings.Contains(string(out), "http://127.0.0.1:8080/signup?invite=") {
+		t.Fatal(code, string(out))
 	}
 }
 

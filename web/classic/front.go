@@ -61,6 +61,15 @@ func (f *Front) Profile(w http.ResponseWriter, r *http.Request, s *web.Server, v
 func (f *Front) Admin(w http.ResponseWriter, r *http.Request, s *web.Server, viewer store.User) {
 	admin(f, w, r, s, viewer)
 }
+func (f *Front) Signup(w http.ResponseWriter, r *http.Request, s *web.Server) {
+	signup(f, w, r, s)
+}
+func (f *Front) Recover(w http.ResponseWriter, r *http.Request, s *web.Server) {
+	recoverAccount(f, w, r, s)
+}
+func (f *Front) Settings(w http.ResponseWriter, r *http.Request, s *web.Server, viewer store.User) {
+	settings(f, w, r, s, viewer)
+}
 
 func (f *Front) render(w http.ResponseWriter, name string, data any) {
 	f.renderCode(w, http.StatusOK, name, data)

@@ -20,6 +20,9 @@ type FrontEnd interface {
 	Manage(w http.ResponseWriter, r *http.Request, s *Server, viewer store.User)
 	Profile(w http.ResponseWriter, r *http.Request, s *Server, viewer store.User, name string)
 	Admin(w http.ResponseWriter, r *http.Request, s *Server, viewer store.User)
+	Signup(w http.ResponseWriter, r *http.Request, s *Server)
+	Recover(w http.ResponseWriter, r *http.Request, s *Server)
+	Settings(w http.ResponseWriter, r *http.Request, s *Server, viewer store.User)
 }
 
 // Limiter is the request gate. A nil limiter allows every request.

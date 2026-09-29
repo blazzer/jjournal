@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ const (
 	// SessionCookie is the signed session cookie name.
 	SessionCookie = "journal_session"
 	csrfCookie    = "journal_csrf"
+	inviteCookie  = "journal_invite"
+	recoverCookie = "journal_recover"
 	// SessionTTL is how long a session cookie stays valid.
 	SessionTTL = 30 * 24 * time.Hour
 )
@@ -150,4 +153,69 @@ func hexID(b []byte) string {
 		out[i*2+1] = digits[v&0x0f]
 	}
 	return string(out)
+}
+
+// ClientIP is the request's remote address without the port.
+func ClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// WriteInvite stores the invite hash in a short-lived cookie.
+func (s *Server) WriteInvite(w http.ResponseWriter, r *http.Request, hash string) {
+	s.writeSigned(w, r, inviteCookie, hash, int((15 * time.Minute).Seconds()))
+}
+
+// InviteHash reads the invite cookie.
+func (s *Server) InviteHash(r *http.Request) (string, bool) {
+	return s.readSigned(r, inviteCookie)
+}
+
+// ClearInvite removes the invite cookie.
+func (s *Server) ClearInvite(w http.ResponseWriter, r *http.Request) {
+	s.clearCookie(w, r, inviteCookie)
+}
+
+// WriteRecovery stores a recovery token in a short-lived cookie.
+func (s *Server) WriteRecovery(w http.ResponseWriter, r *http.Request, token string) {
+	s.writeSigned(w, r, recoverCookie, token, int((15 * time.Minute).Seconds()))
+}
+
+// RecoveryToken reads the recovery cookie.
+func (s *Server) RecoveryToken(r *http.Request) (string, bool) {
+	return s.readSigned(r, recoverCookie)
+}
+
+// ClearRecovery removes the recovery cookie.
+func (s *Server) ClearRecovery(w http.ResponseWriter, r *http.Request) {
+	s.clearCookie(w, r, recoverCookie)
+}
+
+func (s *Server) writeSigned(w http.ResponseWriter, r *http.Request, name, id string, maxAge int) {
+	value, err := signSession(s.Config.Secret, id)
+	if err != nil {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: name, Value: value, Path: "/", HttpOnly: true,
+		Secure: s.secure(r), SameSite: http.SameSiteLaxMode, MaxAge: maxAge,
+	})
+}
+
+func (s *Server) readSigned(r *http.Request, name string) (string, bool) {
+	c, err := r.Cookie(name)
+	if err != nil {
+		return "", false
+	}
+	return sessionID(s.Config.Secret, s.Config.SecretPrevious, c.Value)
+}
+
+func (s *Server) clearCookie(w http.ResponseWriter, r *http.Request, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: name, Value: "", Path: "/", HttpOnly: true,
+		Secure: s.secure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
 }

@@ -38,7 +38,7 @@ func run(args []string) int {
 	case "serve":
 		return cmdServe(args)
 	case "invite":
-		return cmdStub("invite")
+		return cmdInvite(args)
 	case "backup":
 		return cmdBackup(args)
 	case "restore":
@@ -54,9 +54,31 @@ func run(args []string) int {
 	}
 }
 
-func cmdStub(name string) int {
-	fmt.Fprintf(os.Stderr, "%s: not available\n", name)
-	return 1
+func cmdInvite(args []string) int {
+	fs := flag.NewFlagSet("invite", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	admin := fs.Bool("admin", false, "grant admin on the new profile")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := loadConfig(false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	st, err := store.OpenWithDataDir(cfg.DBPath, cfg.Secret, cfg.DataDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer st.Close()
+	token, err := st.CreateInvite(context.Background(), 0, *admin, time.Now())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println(cfg.BaseURL + "/signup?invite=" + token)
+	return 0
 }
 
 func loadConfig(requireContact bool) (web.Config, error) {

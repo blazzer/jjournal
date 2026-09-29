@@ -203,7 +203,7 @@ func (s *Store) AddComment(ctx context.Context, entryID, parentID, authorID int6
 // ListComments returns comments on an entry in id order.
 func (s *Store) ListComments(ctx context.Context, entryID int64) ([]Comment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.entry_id, c.parent_id, c.author_user_id, u.handle, c.body_html, c.created_at, c.deleted
-		FROM comments c JOIN users u ON u.id = c.author_user_id
+		FROM comments c LEFT JOIN users u ON u.id = c.author_user_id
 		WHERE c.entry_id=? ORDER BY c.id`, entryID)
 	if err != nil {
 		return nil, err
@@ -212,15 +212,20 @@ func (s *Store) ListComments(ctx context.Context, entryID int64) ([]Comment, err
 	var out []Comment
 	for rows.Next() {
 		var c Comment
-		var parent sql.NullInt64
+		var parent, author sql.NullInt64
+		var name sql.NullString
 		var created string
 		var deleted int
-		if err := rows.Scan(&c.ID, &c.EntryID, &parent, &c.AuthorID, &c.Author, &c.BodyHTML, &created, &deleted); err != nil {
+		if err := rows.Scan(&c.ID, &c.EntryID, &parent, &author, &name, &c.BodyHTML, &created, &deleted); err != nil {
 			return nil, err
 		}
 		if parent.Valid {
 			c.ParentID = parent.Int64
 		}
+		if author.Valid {
+			c.AuthorID = author.Int64
+		}
+		c.Author = name.String
 		c.CreatedAt = parseTime(sql.NullString{String: created, Valid: true})
 		c.Deleted = deleted != 0
 		out = append(out, c)
@@ -230,7 +235,8 @@ func (s *Store) ListComments(ctx context.Context, entryID int64) ([]Comment, err
 
 // DeleteComment soft-deletes a comment for its author or the entry author.
 func (s *Store) DeleteComment(ctx context.Context, viewerID, commentID int64) error {
-	var authorID, entryAuthor int64
+	var authorID sql.NullInt64
+	var entryAuthor int64
 	err := s.db.QueryRowContext(ctx, `SELECT c.author_user_id, eu.id
 		FROM comments c
 		JOIN entries e ON e.id = c.entry_id
@@ -239,7 +245,7 @@ func (s *Store) DeleteComment(ctx context.Context, viewerID, commentID int64) er
 	if err != nil {
 		return err
 	}
-	if viewerID != authorID && viewerID != entryAuthor {
+	if viewerID != entryAuthor && (!authorID.Valid || viewerID != authorID.Int64) {
 		return fmt.Errorf("store: cannot delete comment")
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE comments SET deleted=1, body_html='' WHERE id=?`, commentID)

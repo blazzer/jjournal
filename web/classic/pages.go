@@ -2,6 +2,7 @@ package classic
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"journal/app"
 	"journal/lj"
 	"journal/store"
+	"journal/vault"
 	"journal/web"
 )
 
@@ -36,15 +38,65 @@ func login(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server) {
 		return
 	}
 	pw := r.FormValue("password")
+	username := strings.ToLower(strings.TrimSpace(r.FormValue("username")))
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	sess, pwMD5, kind := app.Authenticate(ctx, s.Source, r.FormValue("username"), pw)
+	now := time.Now()
+	ip := web.ClientIP(r)
+	if d := s.Limits.Allow(now, username, ip); d.Paused {
+		web.WriteError(w, r, app.RateLimited{RetryAfter: time.Until(d.Until)})
+		return
+	} else if d.Delay > 0 {
+		time.Sleep(d.Delay)
+	}
+	existing, lookupErr := s.Store.UserByUsername(ctx, username)
+	if lookupErr == nil && existing.HasVault {
+		dek, err := s.Store.OpenVault(ctx, existing.ID, pw)
+		pw = ""
+		if err != nil {
+			var busy vault.BusyError
+			if errors.As(err, &busy) {
+				w.Header().Set("Retry-After", "5")
+				http.Error(w, "slow down", http.StatusServiceUnavailable)
+				return
+			}
+			s.Limits.Fail(now, username, ip)
+			f.renderCode(w, http.StatusUnauthorized, "login", struct {
+				baseView
+				Error string
+			}{baseView: baseView{SiteName: s.Config.SiteName, Title: "Log in", CSRF: s.CSRFToken(w, r)}, Error: "Those credentials were not accepted."})
+			return
+		}
+		s.Limits.Reset(username)
+		id, err := s.Store.CreateSession(ctx, existing.ID, time.Now().Add(web.SessionTTL))
+		if err != nil {
+			http.Error(w, "Could not start a session.", http.StatusInternalServerError)
+			return
+		}
+		s.Vaults.Put(id, dek, time.Now())
+		clear(dek)
+		s.WriteSession(w, r, id)
+		http.Redirect(w, r, "/~"+existing.Username+"/friends", http.StatusSeeOther)
+		return
+	}
+	sess, pwMD5, kind := app.Authenticate(ctx, s.Source, username, pw)
 	pw = ""
 	if kind == app.LoginDigest {
 		http.Redirect(w, r, lj.DigestManageURL, http.StatusSeeOther)
 		return
 	}
 	if kind != app.LoginOK {
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			_ = vault.Dummy(ctx)
+		}
+		s.Limits.Fail(now, username, ip)
+		if kind == app.LoginAuth {
+			s.Limits.ServiceFail(now, ip)
+			if !s.Limits.AllowService(now, ip) {
+				web.WriteError(w, r, app.RateLimited{RetryAfter: time.Hour})
+				return
+			}
+		}
 		msg := "Could not reach LiveJournal."
 		code := http.StatusBadGateway
 		switch kind {
@@ -90,6 +142,7 @@ func logout(_ *Front, w http.ResponseWriter, r *http.Request, s *web.Server, _ s
 	if c, err := r.Cookie(web.SessionCookie); err == nil {
 		id, _, _ := strings.Cut(c.Value, ".")
 		_ = s.Store.DeleteSession(r.Context(), id)
+		s.Vaults.Drop(id)
 	}
 	s.ClearSession(w, r)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -319,6 +372,44 @@ func profile(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server, vi
 }
 
 func admin(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server, viewer store.User) {
+	if !store.IsAdmin(viewer) {
+		web.WriteError(w, r, app.Forbidden{Msg: "forbidden"})
+		return
+	}
+	notice := ""
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil || !s.CheckCSRF(r) {
+			http.Error(w, "The form expired. Go back and try again.", http.StatusBadRequest)
+			return
+		}
+		switch r.FormValue("action") {
+		case "invite":
+			token, err := s.Store.CreateInvite(r.Context(), viewer.ID, r.FormValue("as_admin") == "1", time.Now())
+			if err != nil {
+				http.Error(w, "Could not create an invite.", http.StatusInternalServerError)
+				return
+			}
+			notice = s.Config.BaseURL + "/signup?invite=" + token
+		case "recover":
+			u, err := s.Store.UserByUsername(r.Context(), r.FormValue("handle"))
+			if err != nil {
+				notice = "No such member."
+				break
+			}
+			token, err := s.Store.CreateRecovery(r.Context(), u.ID, time.Now())
+			if err != nil {
+				http.Error(w, "Could not create a recovery link.", http.StatusInternalServerError)
+				return
+			}
+			notice = s.Config.BaseURL + "/recover?token=" + token
+		case "purge":
+			if err := s.Store.PurgeLegacySecrets(r.Context()); err != nil {
+				http.Error(w, "Could not purge legacy secrets.", http.StatusInternalServerError)
+				return
+			}
+			notice = "Legacy secrets purged."
+		}
+	}
 	users, err := app.Users(r.Context(), s.Store, app.ViewerFrom(viewer))
 	if err != nil {
 		web.WriteError(w, r, err)
@@ -341,10 +432,13 @@ func admin(f *Front, w http.ResponseWriter, r *http.Request, s *web.Server, view
 			Migrated: formatWhen(u.MigratedAt),
 		})
 	}
+	legacy, _ := s.Store.LegacySecrets(r.Context())
 	f.render(w, "admin", struct {
 		baseView
-		Rows []row
-	}{baseView: base(s, viewer, "Sync", s.CSRFToken(w, r)), Rows: rows})
+		Rows   []row
+		Notice string
+		Legacy int
+	}{baseView: base(s, viewer, "Sync", s.CSRFToken(w, r)), Rows: rows, Notice: notice, Legacy: legacy})
 }
 
 func atoi(s string) int {

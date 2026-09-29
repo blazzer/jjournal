@@ -98,5 +98,75 @@
 </tr>{{end}}
 </tbody>
 </table>
+{{if .Notice}}<p class="banner">{{.Notice}}</p>{{end}}
+<p>{{.Legacy}} legacy secrets.</p>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="invite">
+<label><input type="checkbox" name="as_admin" value="1"> Admin</label>
+<button type="submit">Create invite</button>
+</form>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="recover">
+<label>Handle <input name="handle"></label>
+<button type="submit">Recovery link</button>
+</form>
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="purge">
+<button type="submit">Purge legacy secrets</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "signup"}}
+{{template "start" .}}
+<h1>Create a profile</h1>
+<p>The operator of this site can technically read everything stored here, including mirrored friends-locked posts.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/signup">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Handle <input name="handle" required></label>
+<label>Display name <input name="display"></label>
+<label>Passphrase <input type="password" name="passphrase" required></label>
+<label>Confirm <input type="password" name="confirm" required></label>
+<button type="submit">Create profile</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "recover"}}
+{{template "start" .}}
+<h1>New passphrase</h1>
+<p>The old vault is deleted. Service passwords must be entered again.</p>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/recover">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Service username <input name="service_user"></label>
+<label>Service password <input type="password" name="service_password"></label>
+<label>New passphrase <input type="password" name="passphrase" required></label>
+<label>Confirm <input type="password" name="confirm" required></label>
+<button type="submit">Reset</button>
+</form>
+{{template "end" .}}
+{{end}}
+
+{{define "settings"}}
+{{template "start" .}}
+<h1>Settings</h1>
+{{if .Error}}<p class="banner">{{.Error}}</p>{{end}}
+<form method="post" action="/settings">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Current passphrase <input type="password" name="passphrase" required></label>
+<label>New passphrase <input type="password" name="next" required></label>
+<button type="submit">Change passphrase</button>
+</form>
+<form method="post" action="/settings">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="action" value="delete">
+<label>Passphrase <input type="password" name="passphrase" required></label>
+<button type="submit">Delete profile</button>
+</form>
 {{template "end" .}}
 {{end}}
