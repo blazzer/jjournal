@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -46,8 +48,7 @@ func run(args []string) int {
 	case "rotate-keys":
 		return cmdRotate(args)
 	case "demo":
-		fmt.Fprintln(os.Stderr, "not available")
-		return 1
+		return cmdDemo(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		return 2
@@ -79,6 +80,76 @@ func cmdInvite(args []string) int {
 	}
 	fmt.Println(cfg.BaseURL + "/signup?invite=" + token)
 	return 0
+}
+
+func cmdDemo(args []string) int {
+	if err := ensureDemoEnv(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	url, err := demoInviteURL()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println(url)
+	return cmdServe(args)
+}
+
+func ensureDemoEnv() error {
+	if strings.TrimSpace(os.Getenv("OPERATOR_CONTACT")) == "" {
+		if err := os.Setenv("OPERATOR_CONTACT", "demo@localhost"); err != nil {
+			return err
+		}
+	}
+	data := os.Getenv("DATA_DIR")
+	if data == "" {
+		data = "data"
+		if err := os.Setenv("DATA_DIR", data); err != nil {
+			return err
+		}
+	}
+	if os.Getenv("DB_PATH") == "" {
+		if err := os.Setenv("DB_PATH", filepath.Join(data, "demo.db")); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(os.Getenv("SECRET_KEY")) != "" {
+		return nil
+	}
+	path := filepath.Join(data, "demo.key")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return err
+		}
+		b = []byte(base64.StdEncoding.EncodeToString(raw))
+		if err := os.MkdirAll(data, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			return err
+		}
+	}
+	return os.Setenv("SECRET_KEY", strings.TrimSpace(string(b)))
+}
+
+func demoInviteURL() (string, error) {
+	cfg, err := loadConfig(false)
+	if err != nil {
+		return "", err
+	}
+	st, err := store.OpenWithDataDir(cfg.DBPath, cfg.Secret, cfg.DataDir)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	token, err := st.CreateInvite(context.Background(), 0, true, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return cfg.BaseURL + "/signup?invite=" + token, nil
 }
 
 func loadConfig(requireContact bool) (web.Config, error) {

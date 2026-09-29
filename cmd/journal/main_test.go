@@ -50,8 +50,21 @@ func TestStubs(t *testing.T) {
 	if code := run([]string{"rotate-keys"}); code != 1 {
 		t.Fatal(code)
 	}
-	if code := run([]string{"demo"}); code != 1 {
-		t.Fatal(code)
+}
+
+func TestDemoEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+	t.Setenv("DB_PATH", "")
+	t.Setenv("SECRET_KEY", "")
+	t.Setenv("OPERATOR_CONTACT", "")
+	t.Setenv("BASE_URL", "http://127.0.0.1:8080")
+	if err := ensureDemoEnv(); err != nil {
+		t.Fatal(err)
+	}
+	url, err := demoInviteURL()
+	if err != nil || !strings.Contains(url, "http://127.0.0.1:8080/signup?invite=") {
+		t.Fatal(err, url)
 	}
 }
 

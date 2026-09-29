@@ -11,6 +11,8 @@ const (
 	DefaultBlockFor    = 6 * time.Hour
 	DefaultFriendEvery = 24 * time.Hour
 	DefaultConcurrent  = 2
+	FeedInterval       = 60 * time.Minute
+	FeedJitter         = 10 * time.Minute
 	// DefaultMaxPages is how many friends-page requests one sync may make.
 	// Each page is 50 entries. Three pages plus the one-second gate stays
 	// under a burst while still moving through the 1,000-entry window.
