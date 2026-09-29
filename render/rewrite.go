@@ -40,18 +40,33 @@ func RenderBody(raw string, opt Options) string {
 
 func stripScheme(s string) string {
 	const needle = "javascript:"
-	lower := strings.ToLower(s)
 	var b strings.Builder
 	i := 0
-	for {
-		j := strings.Index(lower[i:], needle)
-		if j < 0 {
-			b.WriteString(s[i:])
-			return b.String()
+	for i < len(s) {
+		if hasASCIIPrefix(s[i:], needle) {
+			i += len(needle)
+			continue
 		}
-		b.WriteString(s[i : i+j])
-		i += j + len(needle)
+		b.WriteByte(s[i])
+		i++
 	}
+	return b.String()
+}
+
+func hasASCIIPrefix(s, needle string) bool {
+	if len(s) < len(needle) {
+		return false
+	}
+	for i := 0; i < len(needle); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != needle[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func transform(n *html.Node, opt Options, inCut bool) {
