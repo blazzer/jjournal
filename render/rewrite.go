@@ -24,7 +24,7 @@ func RenderBody(raw string, opt Options) string {
 	ctx := &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div}
 	nodes, err := html.ParseFragment(strings.NewReader(clean), ctx)
 	if err != nil {
-		return Sanitize(raw)
+		return stripScheme(Sanitize(raw))
 	}
 	root := &html.Node{Type: html.ElementNode, Data: "div"}
 	for _, n := range nodes {
@@ -35,7 +35,23 @@ func RenderBody(raw string, opt Options) string {
 	for c := root.FirstChild; c != nil; c = c.NextSibling {
 		_ = html.Render(&buf, c)
 	}
-	return buf.String()
+	return stripScheme(buf.String())
+}
+
+func stripScheme(s string) string {
+	const needle = "javascript:"
+	lower := strings.ToLower(s)
+	var b strings.Builder
+	i := 0
+	for {
+		j := strings.Index(lower[i:], needle)
+		if j < 0 {
+			b.WriteString(s[i:])
+			return b.String()
+		}
+		b.WriteString(s[i : i+j])
+		i += j + len(needle)
+	}
 }
 
 func transform(n *html.Node, opt Options, inCut bool) {

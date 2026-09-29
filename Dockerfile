@@ -7,10 +7,10 @@ ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/journal ./cmd/journal
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates su-exec \
+RUN apk add --no-cache ca-certificates su-exec wget \
     && adduser -D -H -u 10001 journal
 COPY --from=build /out/journal /usr/local/bin/journal
 COPY docker-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]

@@ -7,6 +7,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
       BASE_URL: ${BASE_URL:-https://journal.example.com}
       SITE_NAME: ${SITE_NAME:-Journal}
+      OPERATOR_CONTACT: ${OPERATOR_CONTACT:?set OPERATOR_CONTACT}
+      DATA_DIR: /data
+      METRICS_ADDR: 127.0.0.1:9091
       LJ_SOURCE: ${LJ_SOURCE:-xmlrpc}
       USERPIC_DIR: /data/userpics
       IMAGE_CACHE_DIR: /data/images
@@ -14,6 +17,13 @@ services:
       - journal-data:/data
     expose:
       - "8080"
+    mem_limit: 512m
+    cpus: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
   caddy:
     image: caddy:2
